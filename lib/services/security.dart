@@ -14,6 +14,10 @@ class Security {
     return base64Encode(List<int>.generate(16, (_) => r.nextInt(256)));
   }
 
+  /// 32-byte key from a secret (PBKDF2-HMAC-SHA256).
+  static List<int> deriveKey(String secret, String salt, int iterations) =>
+      _pbkdf2(utf8.encode(secret), base64Decode(salt), iterations, 32);
+
   static String hash(String secret, String salt) =>
       base64Encode(_pbkdf2(utf8.encode(secret), base64Decode(salt), _iterations, 32));
 

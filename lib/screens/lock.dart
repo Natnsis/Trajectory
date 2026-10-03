@@ -18,7 +18,7 @@ class LockScreen extends StatelessWidget {
           const Logo(size: 44),
           VStack(cross: CrossAxisAlignment.center, children: [
             const Heading('Enter your PIN', size: 26),
-            Muted('Hello again, ${s.profile.name}. Type or tap your PIN.'),
+            Muted(s.profile.name.isEmpty ? 'Your data is encrypted with your PIN.' : 'Hello again, ${s.profile.name}. Your data is encrypted with your PIN.'),
           ]),
           HStack(gap: 14, main: MainAxisAlignment.center, children: [
             for (var i = 0; i < s.pinLength; i++)
@@ -33,7 +33,7 @@ class LockScreen extends StatelessWidget {
                 ),
               ),
           ]),
-          SizedBox(height: 20, child: Text(s.pinErr, style: t.mono(size: 12.5, color: t.a))),
+          SizedBox(height: 20, child: Text(s.unlocking ? 'Decrypting…' : s.pinErr, style: t.mono(size: 12.5, color: s.unlocking ? t.mute : t.a))),
           SizedBox(
             width: 64 * 3 + 20,
             child: Wrap(spacing: 10, runSpacing: 10, children: [
@@ -86,12 +86,15 @@ class LockScreen extends StatelessWidget {
             Row(mainAxisAlignment: MainAxisAlignment.end, children: [
               Btn('Cancel', onTap: () => Navigator.pop(ctx)),
               const SizedBox(width: 8),
-              Btn('Reset PIN', kind: BtnKind.primary, onTap: () {
+              Btn('Reset PIN', kind: BtnKind.primary, onTap: () async {
                 if (!RegExp(r'^\d{4,6}$').hasMatch(pin.text)) {
                   setState(() => err = 'PIN must be 4-6 digits');
                   return;
                 }
-                if (ctx.appRead.recover(phrase.text, pin.text)) {
+                setState(() => err = 'Checking…');
+                final ok = await ctx.appRead.recover(phrase.text, pin.text);
+                if (!ctx.mounted) return;
+                if (ok) {
                   Navigator.pop(ctx);
                 } else {
                   setState(() => err = 'That phrase doesn\'t match');

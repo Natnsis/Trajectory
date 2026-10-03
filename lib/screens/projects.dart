@@ -15,12 +15,6 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   String goalFilter = 'all';
   bool byActivity = true;
 
-  int _activityRank(String last) {
-    if (last == 'today') return 0;
-    final d = RegExp(r'^(\d+)d$').firstMatch(last);
-    if (d != null) return int.parse(d.group(1)!);
-    return last == '-' ? 9999 : 500;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,10 +32,12 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         TourTarget(id: 'projects.new', child: Btn('New from description', kind: BtnKind.primary, size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), onTap: s.toggleNewProj)),
       ]),
       if (s.newProjOpen) const FadeIn(child: _NewProject()),
+      if (s.projects.isEmpty)
+        const Muted('No projects yet. Use "New from description" to describe one and get a milestone breakdown, or drag cards between columns once you have some.', size: 13),
       TourTarget(id: 'projects.board', child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         for (var i = 0; i < projectStatuses.length; i++) ...[
           if (i > 0) const SizedBox(width: 14),
-          Expanded(child: _Column(status: projectStatuses[i], filter: goalFilter, sort: (a, b) => byActivity ? _activityRank(a.last).compareTo(_activityRank(b.last)) : a.name.compareTo(b.name))),
+          Expanded(child: _Column(status: projectStatuses[i], filter: goalFilter, sort: (a, b) => byActivity ? b.lastActive.compareTo(a.lastActive) : a.name.compareTo(b.name))),
         ]
       ])),
     ]);
@@ -119,7 +115,7 @@ class _Card extends StatelessWidget {
         Bar(pct: p.computedPct.toDouble()),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Flexible(child: Text(p.goal, overflow: TextOverflow.ellipsis, style: t.mono(size: 11, color: t.mute))),
-          Text(p.last, style: t.mono(size: 11, color: t.mute)),
+          Text(p.lastLabel, style: t.mono(size: 11, color: t.mute)),
         ]),
       ]),
     );
@@ -133,18 +129,13 @@ class _NewProject extends StatefulWidget {
 }
 
 class _NewProjectState extends State<_NewProject> {
-  final _desc = TextEditingController(text: 'A weekly newsletter on indie SaaS: 4 issues before I decide to keep going.');
+  final _desc = TextEditingController();
   List<Milestone>? _ms;
   bool _loading = false;
   late String _goal = context.appRead.goalNames.firstOrNull ?? 'Inbox';
 
-  @override
-  void initState() {
-    super.initState();
-    _generate();
-  }
-
   Future<void> _generate() async {
+    if (_desc.text.trim().isEmpty) return;
     setState(() => _loading = true);
     final ms = await context.appRead.breakdown(_desc.text);
     if (mounted) {
@@ -167,7 +158,7 @@ class _NewProjectState extends State<_NewProject> {
         Expanded(
           child: VStack(gap: 8, children: [
             const Strong('Describe it'),
-            Field(controller: _desc, minLines: 5, maxLines: 6, fill: t.bg),
+            Field(controller: _desc, hint: 'What do you want to build? A sentence or two is enough.', minLines: 5, maxLines: 6, fill: t.bg),
             Row(children: [
               Text('Linked goal: ', style: t.body(size: 12, color: t.mute)),
               DropdownButton<String>(
@@ -200,7 +191,7 @@ class _NewProjectState extends State<_NewProject> {
               Btn('Create project', kind: BtnKind.primary, size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
                   enabled: !_loading && _ms != null, onTap: () => s.createProject(_desc.text, _goal, _ms!)),
               const SizedBox(width: 8),
-              Btn('Regenerate', size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 7), enabled: !_loading, onTap: _generate),
+              Btn(_ms == null ? 'Break it down' : 'Regenerate', size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 7), enabled: !_loading, onTap: _generate),
             ]),
           ]),
         ),

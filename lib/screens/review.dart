@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/tokens.dart';
 import '../shell/tour.dart';
 import '../widgets/common.dart';
+import '../state/models.dart';
 
 class ReviewScreen extends StatelessWidget {
   const ReviewScreen({super.key});
@@ -14,29 +15,31 @@ class ReviewScreen extends StatelessWidget {
     'Adjustments',
     'Next week',
   ];
-  static const adjustments = [
-    ('1', 'Move all deep-work blocks to before noon'),
-    ('2', 'Spanish at lunch instead of after work'),
-    ('3', 'Shrink gym target to 2× until next month'),
-  ];
 
   @override
   Widget build(BuildContext context) {
     final s = context.app;
     final t = context.t;
-    final planned =
-        s.blocks.where((b) => b.kind != 'cal').length + s.tasks.length;
-    final done = s.blocks.where((b) => b.kind == 'done').length + s.doneTasks;
-    final missed = s.blocks.where((b) => b.kind == 'missed').toList();
+    // This week only (Monday to today).
+    final ws = dayKey(s.weekStart), today = s.todayKey;
+    final weekTasks = s.tasks.where((x) => x.date.compareTo(ws) >= 0 && x.date.compareTo(today) <= 0).toList();
+    final wb = s.weekBlocks;
+    final planned = wb.length + weekTasks.length;
+    final done = wb.where((b) => b.kind == 'done').length + weekTasks.where((x) => x.done).length;
+    final missed = wb.where((b) => b.kind == 'missed').toList();
     final pct = planned == 0 ? 0 : (done / planned * 100).round();
-    final focusH =
-        (s.focusMinutesLogged / 60 +
-        s.blocks
-            .where((b) => b.kind == 'done')
-            .fold<int>(0, (a, b) => a + b.len));
+    final focusH = s.sessionsSince(s.weekStart).fold<int>(0, (a, x) => a + x.minutes) / 60;
+    final urges = s.reduce.fold<int>(0, (a, h) => a + h.urgesThisWeek);
     final ai = s.reviewDraft;
+    // Rule-based suggestions, only when the data supports them.
+    final derived = <(String, String)>[
+      if (missed.where((b) => b.start >= 14).length >= 2) ('late', 'Move hard blocks before noon: ${missed.where((b) => b.start >= 14).length} afternoon blocks slipped'),
+      for (final h in s.build)
+        if (h.days.isNotEmpty && s.habitRate(h.days, window: 7) < 40) ('h${h.id}', 'Shrink "${h.name}" to something you can do on a bad day'),
+      if (weekTasks.where((x) => !x.done).length > 5) ('fewer', 'Plan fewer tasks per day: ${weekTasks.where((x) => !x.done).length} are still open'),
+    ];
     final adj = ai == null
-        ? adjustments
+        ? derived
         : [
             for (var i = 0; i < ai.adjustments.length; i++)
               ('ai$i', ai.adjustments[i]),
@@ -147,9 +150,11 @@ class ReviewScreen extends StatelessWidget {
                             )
                           else
                             Text(
-                              '${missed.isEmpty ? 'Nothing slipped on the planner.' : '${missed.length} planned block(s) slipped: ${missed.map((b) => b.title).join(', ')}. Blocks after 14:00 are the ones that slip.'} '
-                              '${s.reduce.fold<int>(0, (a, h) => a + h.urges)} urges logged. '
-                              '${pct >= 60 ? 'This was a decent week with one clear leak.' : 'A rough week. Shrink the plan, don\'t abandon it.'}',
+                              planned == 0
+                                  ? 'Nothing planned or done this week yet. Add tasks or planner blocks and this report writes itself from what happens.'
+                                  : '${missed.isEmpty ? 'Nothing slipped on the planner.' : '${missed.length} planned block(s) slipped: ${missed.map((b) => b.title).join(', ')}.'} '
+                                      '${urges > 0 ? '$urges urges logged. ' : ''}'
+                                      'You finished $pct% of what you planned.',
                               style: t.body(size: 16, height: 1.6),
                             ),
                         ],
@@ -167,6 +172,7 @@ class ReviewScreen extends StatelessWidget {
                                 child: Text(w),
                               )
                           else ...[
+                            if (weekTasks.every((x) => !x.done) && s.proof.isEmpty) const Muted('No wins logged yet this week.'),
                             for (final p in s.proof.take(3))
                               Divided(
                                 padding: const EdgeInsets.symmetric(
@@ -175,7 +181,7 @@ class ReviewScreen extends StatelessWidget {
                                 child: Text(p.title),
                               ),
                             for (final task
-                                in s.tasks.where((x) => x.done).take(3))
+                                in weekTasks.where((x) => x.done).take(5))
                               Divided(
                                 padding: const EdgeInsets.symmetric(
                                   vertical: 10,
@@ -232,7 +238,7 @@ class ReviewScreen extends StatelessWidget {
                                   ),
                                 ),
                               ),
-                            for (final task in s.tasks.where((x) => !x.done))
+                            for (final task in weekTasks.where((x) => !x.done))
                               Divided(
                                 padding: const EdgeInsets.symmetric(
                                   vertical: 10,
@@ -308,7 +314,9 @@ class ReviewScreen extends StatelessWidget {
                             Muted(ai.nextWeek, size: 14)
                           else
                             Muted(
-                              '8h deep work (all mornings, ${s.profile.peakStart.toString().padLeft(2, '0')}-${s.profile.peakEnd}). Gym Mon/Wed/Fri at 07:00. Spanish Tue/Thu at lunch. Feeds blocked after 22:00.',
+                              'Put your hardest work in your ${s.profile.peakStart.toString().padLeft(2, '0')}-${s.profile.peakEnd} peak window each day'
+                              '${s.build.isEmpty ? '' : ', keep ${s.build.map((h) => h.name).join(', ')} going'}'
+                              '${s.unscheduled.isNotEmpty ? ', and schedule the ${s.unscheduled.length} unscheduled item(s) on the Planner' : ''}. Use "Write it with AI" for a detailed plan.',
                               size: 14,
                             ),
                           Container(
@@ -328,9 +336,9 @@ class ReviewScreen extends StatelessWidget {
                           Row(
                             children: [
                               Btn(
-                                'Lock next week',
+                                s.nextWeekLocked ? 'Next week is locked' : 'Lock next week',
                                 kind: BtnKind.primary,
-                                onTap: s.lockFromReview,
+                                onTap: s.nextWeekLocked ? null : s.lockFromReview,
                               ),
                             ],
                           ),

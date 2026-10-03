@@ -289,7 +289,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           children: [
             _title('Create a PIN'),
             const Muted(
-              '4-6 digits. It locks the app on this machine. Only a salted hash is stored, never the PIN itself.',
+              '4-6 digits. It unlocks the key that encrypts everything Trajectory stores on this machine (AES-256). The PIN itself is never stored.',
               size: 14,
             ),
             Wrap(

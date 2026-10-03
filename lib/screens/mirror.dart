@@ -1,15 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
+import '../state/models.dart';
 import '../theme/tokens.dart';
 import '../shell/tour.dart';
 import '../widgets/common.dart';
-
-const _letters = {
-  'A':
-      "It's {h} later and {project} is still a folder called final-2. You told people it was almost done for most of that time. The evenings went somewhere, mostly to a feed you can't remember a single post from. You're not in bad shape, just the same shape. The good news: it was never a talent problem. It was 10pm.",
-  'B':
-      "It's {h} later. {project} is real. Not perfect, but real, and people use it. You did it in mornings, mostly before anyone was awake. The hard goal hurt and you'd do it again. None of this came from a big change; it came from moving the hard work before noon and leaving the phone in the kitchen.",
-};
 
 class MirrorScreen extends StatelessWidget {
   const MirrorScreen({super.key});
@@ -18,37 +14,73 @@ class MirrorScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = context.app;
     final t = context.t;
-    final (f, long) = switch (s.horizon) {
-      '1m' => (.09, '1 month'),
-      '6m' => (.5, '6 months'),
-      '5y' => (4.2, '5 years'),
-      _ => (1.0, '1 year'),
+    final (weeks, long) = switch (s.horizon) {
+      '1m' => (4.3, '1 month'),
+      '6m' => (26.0, '6 months'),
+      '5y' => (260.0, '5 years'),
+      _ => (52.0, '1 year'),
     };
-    int rd(num n) => (n * f).round();
-    final goalCount = s.goals.length;
+    // Your observed pace over the last 28 days.
+    final now = DateTime.now();
+    final since = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 27));
+    final sinceKey = dayKey(since);
+    final focusPerWk = s.sessionsSince(since).fold<int>(0, (a, x) => a + x.minutes) / 60 / 4;
+    final recentTasks = s.tasks.where((x) => x.date.compareTo(sinceKey) >= 0 && x.date.compareTo(s.todayKey) <= 0).toList();
+    final donePerWk = recentTasks.where((x) => x.done).length / 4;
+    final plannedPerWk = recentTasks.length / 4;
+    var habitDone = 0;
+    for (final h in s.build) {
+      habitDone += h.days.where((d) => d.compareTo(sinceKey) >= 0).length;
+    }
+    final habitPerWk = habitDone / 4;
+    final opensPerWk = s.gateLog.where((g) => g.opened && !g.at.isBefore(since)).length / 4;
+    final planFocusPerWk = s.weekBlocks.fold<int>(0, (a, b) => a + b.len).toDouble();
+    final hasData = focusPerWk > 0 || recentTasks.isNotEmpty || habitDone > 0 || opensPerWk > 0;
+
+    String n(double v) => v >= 10 ? '${v.round()}' : v.toStringAsFixed(v == v.roundToDouble() ? 0 : 1);
     final rows = [
-      ('Projects shipped', '${rd(1)}', '${rd(4) < 1 && f >= .2 ? 1 : rd(4)}'),
-      ('Hours on goals', '${rd(140)}h', '${rd(610)}h'),
-      ('Goals reached', '0 / $goalCount', '${rd(3).clamp(0, goalCount)} / $goalCount'),
-      ('Hours scrolling', '${rd(620)}h', '${rd(150)}h'),
+      ('Focus hours', '${n(focusPerWk * weeks)}h', '${n(math.max(focusPerWk, planFocusPerWk) * weeks)}h'),
+      ('Tasks finished', n(donePerWk * weeks), n(plannedPerWk * weeks)),
+      if (s.build.isNotEmpty) ('Habit check-ins', n(habitPerWk * weeks), n(s.build.length * 7 * weeks)),
+      if (s.gateLog.isNotEmpty) ('Blocked sites opened', n(opensPerWk * weeks), '0'),
     ];
-    final project = s.projects.where((p) => p.status == 'Active').firstOrNull?.name ?? 'Your project';
+    final top = s.goals.isEmpty ? null : (s.goals.toList()..sort((a, b) => b.pct.compareTo(a.pct))).first;
+    final letterA = 'It\'s $long later and you kept the pace you have now: about ${n(focusPerWk)} focused hours and ${n(donePerWk)} finished tasks a week. '
+        'That adds up to ${rows[0].$2} of focus.${top == null ? '' : ' ${top.name} moved, but only as fast as those hours allowed.'} Nothing broke. Nothing changed much either.';
+    final letterB = 'It\'s $long later and you did what you planned: ${n(math.max(focusPerWk, planFocusPerWk))} focused hours and ${n(plannedPerWk)} tasks a week. '
+        'That\'s ${rows[0].$3} of focus.${top == null ? '' : ' ${top.name} got the time it needed.'} It wasn\'t a big change. It was the plan you already wrote, kept.';
+    final steps = s.recoverySteps;
+
     return ScreenPage(children: [
       PageHeader(eyebrow: 'Future Self Mirror', title: 'Two versions of you, $long from now', actions: [
         TourTarget(id: 'mirror.horizon', child: Segmented(mono: true, size: 13, options: const [('1m', '1 mo'), ('6m', '6 mo'), ('1y', '1 yr'), ('5y', '5 yr')], value: s.horizon, onChanged: s.setHorizon)),
       ]),
-      TourTarget(id: 'mirror.paths', child: Grid(columns: 2, children: [
-        _PathCard(a: true, rows: rows, t: t),
-        _PathCard(a: false, rows: rows, t: t),
-      ])),
+      if (!hasData)
+        const TourTarget(
+          id: 'mirror.paths',
+          child: Panel(
+            padding: EdgeInsets.all(28),
+            child: VStack(gap: 8, children: [
+              Strong('Not enough history yet', size: 16),
+              Muted('The mirror projects your real pace forward. Check off tasks, run focus sessions, or check in habits for a few days and both paths fill in.', size: 13.5),
+            ]),
+          ),
+        )
+      else ...[
+        TourTarget(id: 'mirror.paths', child: Grid(columns: 2, children: [
+          _PathCard(a: true, rows: rows, t: t),
+          _PathCard(a: false, rows: rows, t: t),
+        ])),
+        Text('Path A extends your last 4 weeks. Path B assumes you finish everything you plan.', style: t.body(size: 12, color: t.mute)),
+      ],
       TwoCol(
         ratio: 1.3,
         left: TourTarget(id: 'mirror.letter', child: Panel(
           padding: const EdgeInsets.all(22),
           child: VStack(gap: 12, children: [
             Row(children: [Pills(options: const [('A', 'From Path A'), ('B', 'From Path B')], value: s.letter, onChanged: s.setLetter)]),
-            Heading('Dear ${s.profile.name},', size: 20),
-            Text(_letters[s.letter]!.replaceAll('{h}', long).replaceAll('{project}', project),
+            Heading(s.profile.name.isEmpty ? 'Dear you,' : 'Dear ${s.profile.name},', size: 20),
+            Text(hasData ? (s.letter == 'A' ? letterA : letterB) : 'Your letters get written from your own numbers once there\'s a little history to go on.',
                 style: t.body(size: 14.5, color: t.mute, height: 1.65)),
             Text('- you, $long from now', style: t.body(size: 13)),
           ]),
@@ -56,14 +88,14 @@ class MirrorScreen extends StatelessWidget {
         right: TourTarget(id: 'mirror.recovery', child: Callout(
           padding: const EdgeInsets.all(22),
           child: VStack(gap: 10, children: [
-            Strong('Move to Path B in three days'),
-            _step(t, '1', 'Tonight', ': 10 min on $project. Just open the file.'),
-            _step(t, '2', 'Sunday 07:30', ': easy 3k run, shoes by the door tonight.'),
-            _step(t, '3', 'Monday', ': phone charges in the kitchen after 22:00.'),
+            const Strong('Move to Path B'),
+            if (steps.isEmpty) const Muted('Add a goal, a task or a habit and you\'ll get three small steps built from them.', size: 13),
+            for (var i = 0; i < steps.length; i++) _step(t, '${i + 1}', steps[i].$1, ': ${steps[i].$2}'),
             const SizedBox(height: 8),
-            Row(children: [
-              Btn(s.recoveryAdded ? 'Added to Planner ✓' : 'Add 3-day plan to Planner', kind: BtnKind.primary, onTap: s.recoveryAdded ? null : s.addRecovery),
-            ]),
+            if (steps.isNotEmpty)
+              Row(children: [
+                Btn(s.recoveryAdded ? 'Added to your tasks' : 'Add these to my tasks', kind: BtnKind.primary, onTap: s.recoveryAdded ? null : s.addRecovery),
+              ]),
           ]),
         )),
       ),

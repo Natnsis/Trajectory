@@ -115,7 +115,12 @@ class _UnscheduledState extends State<_Unscheduled> {
             ),
           ]),
         ),
-        Text('${s.blocks.where((b) => b.kind == 'cal').length} calendar events (read-only)', style: t.body(size: 11.5, color: t.mute)),
+        Text(
+          s.calendarUrl.isEmpty
+              ? 'Connect a calendar in Settings to see events here.'
+              : s.calendarError ?? 'Calendar: ${s.calendarBlocks.length} event(s) this week (read-only)',
+          style: t.body(size: 11.5, color: s.calendarError == null ? t.mute : t.a),
+        ),
       ]),
     );
   }
@@ -205,7 +210,7 @@ class _DayColumn extends StatelessWidget {
               ),
             ),
         ]),
-        for (final b in s.blocks.where((b) => b.day == day))
+        for (final b in [...s.calendarBlocks, ...s.weekBlocks].where((b) => b.day == day))
           Positioned(left: 3, right: 3, top: y(b.start), height: b.len * h, child: _BlockView(b: b)),
       ]);
     });
@@ -237,8 +242,9 @@ class _BlockView extends StatelessWidget {
           )
         : DashedBox(color: bd, dash: style == 'dotted' ? 1.5 : 4, gap: style == 'dotted' ? 2.5 : 3, child: SizedBox.expand(child: label));
     return GestureDetector(
-      onSecondaryTapDown: (d) => _menu(context, d.globalPosition, s),
-      onLongPressStart: (d) => _menu(context, d.globalPosition, s),
+      // Calendar events are read-only.
+      onSecondaryTapDown: b.kind == 'cal' ? null : (d) => _menu(context, d.globalPosition, s),
+      onLongPressStart: b.kind == 'cal' ? null : (d) => _menu(context, d.globalPosition, s),
       child: SizedBox.expand(child: box),
     );
   }

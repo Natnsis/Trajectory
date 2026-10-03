@@ -578,11 +578,13 @@ class Dumbbell extends StatefulWidget {
     required this.color,
     this.max = 100,
     this.unit = '%',
+    this.targetLabel = 'said',
+    this.actualLabel = 'did',
   });
   final List<(String, double, double)> rows; // label, target, actual
   final Color color;
   final double max;
-  final String unit;
+  final String unit, targetLabel, actualLabel;
   @override
   State<Dumbbell> createState() => _DumbbellState();
 }
@@ -670,7 +672,7 @@ class _DumbbellState extends State<Dumbbell> {
                                         ),
                                       ),
                                       TextSpan(
-                                        text: 'did',
+                                        text: widget.actualLabel,
                                         style: t.body(
                                           size: 11.5,
                                           color: t.mute,
@@ -687,7 +689,7 @@ class _DumbbellState extends State<Dumbbell> {
                                         style: t.mono(size: 12),
                                       ),
                                       TextSpan(
-                                        text: 'said',
+                                        text: widget.targetLabel,
                                         style: t.body(
                                           size: 11.5,
                                           color: t.mute,
@@ -697,7 +699,7 @@ class _DumbbellState extends State<Dumbbell> {
                                   ),
                                 ),
                                 Text(
-                                  '${gap >= 0 ? '+' : ''}${gap.round()} pts',
+                                  '${gap >= 0 ? '+' : ''}${gap.round()}${widget.unit == '%' ? ' pts' : widget.unit}',
                                   style: t.mono(size: 11, color: t.mute),
                                 ),
                               ],
@@ -732,7 +734,7 @@ class _DumbbellPainter extends CustomPainter {
     final bottom = rowH * w.rows.length;
     for (final v in [0.0, w.max / 4, w.max / 2, w.max * 3 / 4, w.max]) {
       canvas.drawLine(Offset(x(v), 0), Offset(x(v), bottom), grid);
-      final lp = _tp('${v.round()}', t.mono(size: 10, color: t.mute));
+      final lp = _tp(v == v.roundToDouble() ? '${v.round()}' : v.toStringAsFixed(1), t.mono(size: 10, color: t.mute));
       lp.paint(canvas, Offset(x(v) - lp.width / 2, bottom + 4));
     }
     for (var i = 0; i < w.rows.length; i++) {

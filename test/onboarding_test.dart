@@ -50,9 +50,14 @@ void main() {
           await tester.tap(find.text("I've saved it somewhere safe"));
           await tester.pump();
           await next();
-          // Steps 3–8: defaults are valid
-          for (var i = 2; i < 8; i++) {
+          // Step 3: identity, step 4: a goal (both required now that nothing is pre-filled)
+          await tester.enterText(find.byType(TextField).first, 'ships what I start');
+          await next();
+          await tester.enterText(find.byType(TextField).first, 'Run a half marathon');
+          // Steps 4–8 render without overflow and advance.
+          for (var i = 3; i < 8; i++) {
             expect(tester.takeException(), isNull, reason: 'step ${i + 1}');
+            expect(find.text('STEP ${i + 1} OF 8'), findsOneWidget, reason: 'advanced to step ${i + 1}');
             if (i < 7) await next();
           }
           expect(tester.takeException(), isNull);
@@ -88,9 +93,12 @@ void main() {
     await next();
     await tester.tap(find.text("I've saved it somewhere safe"));
     await tester.pump();
-    for (var i = 0; i < 4; i++) {
-      await next();
-    }
+    await next();
+    await tester.enterText(find.byType(TextField).first, 'ships what I start');
+    await next();
+    await tester.enterText(find.byType(TextField).first, 'Run a half marathon');
+    await next();
+    await next();
     expect(find.text('Your daily rhythm'), findsOneWidget);
     expect(
       find.byType(TextField),

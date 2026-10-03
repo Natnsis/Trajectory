@@ -33,4 +33,9 @@ abstract final class Ph {
   static const check = IconData(0xe182, fontFamily: 'PhosphorRegular');
   static const dotsThree = IconData(0xe1fe, fontFamily: 'PhosphorRegular');
   static const plus = IconData(0xe3d4, fontFamily: 'PhosphorRegular');
+  static const pencilSimple = IconData(0xe3b4, fontFamily: 'PhosphorRegular');
+  static const paperPlaneRight = IconData(0xe396, fontFamily: 'PhosphorRegular');
+  static const calendarPlus = IconData(0xe714, fontFamily: 'PhosphorRegular');
+  static const sunHorizon = IconData(0xe5b6, fontFamily: 'PhosphorRegular');
+  static const bell = IconData(0xe0ce, fontFamily: 'PhosphorRegular');
 }

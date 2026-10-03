@@ -11,16 +11,16 @@ String dayKey(DateTime d) =>
 
 class Profile {
   Profile({
-    this.name = 'Sam',
-    this.identity = 'ships what I start',
+    this.name = '',
+    this.identity = '',
     this.wake = '06:45',
     this.peakStart = 8,
     this.peakEnd = 11,
     this.workStart = 9,
     this.workEnd = 17,
     this.aiProvider = 'Claude',
-    this.partnerName = 'Maya Kim',
-    this.partnerEmail = 'maya@hey.com',
+    this.partnerName = '',
+    this.partnerEmail = '',
     this.notifyBroken = true,
     this.notifyMissed = false,
     this.notifyReport = false,
@@ -49,7 +49,7 @@ class Profile {
       };
 
   factory Profile.fromJson(Map<String, dynamic> j) => Profile(
-        name: j['name'] ?? 'Sam',
+        name: j['name'] ?? '',
         identity: j['identity'] ?? '',
         wake: j['wake'] ?? '06:45',
         peakStart: j['peakStart'] ?? 8,
@@ -66,72 +66,82 @@ class Profile {
       );
 }
 
+DateTime? _date(Object? v) => v is String ? DateTime.tryParse(v) : null;
+
+/// Monday-based week key, e.g. "2026-W40".
+String weekKey(DateTime d) {
+  final thursday = d.add(Duration(days: 4 - d.weekday));
+  final week = thursday.difference(DateTime(thursday.year, 1, 1)).inDays ~/ 7 + 1;
+  return '${thursday.year}-W${week.toString().padLeft(2, '0')}';
+}
+
 class Task {
-  Task({String? id, required this.title, this.time = '-', this.where = '-', this.goal = 'Inbox', this.done = false})
-      : id = id ?? newId();
+  Task({String? id, required this.title, this.time = '-', this.where = '-', this.goal = 'Inbox', this.done = false, String? date, this.doneAt})
+      : id = id ?? newId(),
+        date = date ?? dayKey(DateTime.now());
   final String id;
   String title, time, where, goal;
   bool done;
 
-  Map<String, dynamic> toJson() => {'id': id, 't': title, 'time': time, 'where': where, 'goal': goal, 'done': done};
-  factory Task.fromJson(Map<String, dynamic> j) =>
-      Task(id: j['id'], title: j['t'], time: _dash(j['time']), where: _dash(j['where']), goal: j['goal'], done: j['done'] ?? false);
+  /// Day the task is planned for (dayKey).
+  String date;
+
+  /// When it was checked off; drives best-hours and momentum.
+  DateTime? doneAt;
+
+  Map<String, dynamic> toJson() =>
+      {'id': id, 't': title, 'time': time, 'where': where, 'goal': goal, 'done': done, 'date': date, 'doneAt': doneAt?.toIso8601String()};
+  factory Task.fromJson(Map<String, dynamic> j) => Task(
+      id: j['id'],
+      title: j['t'],
+      time: _dash(j['time']),
+      where: _dash(j['where']),
+      goal: j['goal'],
+      done: j['done'] ?? false,
+      date: j['date'],
+      doneAt: _date(j['doneAt']));
 }
 
-/// A daily check-in habit shown on Today.
-class CheckIn {
-  CheckIn({required this.id, required this.name, required this.meta, this.bad = false, Set<String>? days})
-      : days = days ?? {};
+class BuildHabit {
+  BuildHabit({String? id, required this.name, this.target = '', this.stack = '', Set<String>? days})
+      : id = id ?? newId(),
+        days = days ?? {};
   final String id;
-  String name, meta;
-  bool bad;
+  String name, target, stack;
+
+  /// Days (dayKey) the habit was done.
   final Set<String> days;
 
   bool doneOn(DateTime d) => days.contains(dayKey(d));
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'meta': meta, 'bad': bad, 'days': days.toList()};
-  factory CheckIn.fromJson(Map<String, dynamic> j) => CheckIn(
-      id: j['id'], name: j['name'], meta: j['meta'], bad: j['bad'] ?? false, days: {...(j['days'] as List? ?? [])});
-}
-
-class BuildHabit {
-  BuildHabit({String? id, required this.name, required this.target, required this.stack, required this.momentum, required this.seed, required this.density})
-      : id = id ?? newId();
-  final String id;
-  String name, target, stack;
-  int momentum;
-  final int seed;
-  final double density;
-
-  Map<String, dynamic> toJson() =>
-      {'id': id, 'name': name, 'target': target, 'stack': stack, 'momentum': momentum, 'seed': seed, 'density': density};
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'target': target, 'stack': stack, 'days': days.toList()};
   factory BuildHabit.fromJson(Map<String, dynamic> j) => BuildHabit(
-      id: j['id'],
-      name: j['name'],
-      target: j['target'],
-      stack: j['stack'],
-      momentum: j['momentum'],
-      seed: j['seed'],
-      density: (j['density'] as num).toDouble());
+      id: j['id'], name: j['name'], target: j['target'] ?? '', stack: j['stack'] ?? '', days: {...(j['days'] as List? ?? []).cast<String>()});
 }
 
 class ReduceHabit {
-  ReduceHabit({String? id, required this.name, required this.swap, this.urges = 0, List<UrgeLog>? log})
+  ReduceHabit({String? id, required this.name, required this.swap, List<UrgeLog>? log, Set<String>? heldDays})
       : id = id ?? newId(),
-        log = log ?? [];
+        log = log ?? [],
+        heldDays = heldDays ?? {};
   final String id;
   String name, swap;
-  int urges;
   final List<UrgeLog> log;
 
+  /// Days (dayKey) the user marked "held the line".
+  final Set<String> heldDays;
+
+  bool heldOn(DateTime d) => heldDays.contains(dayKey(d));
+  int get urgesThisWeek => log.where((l) => DateTime.now().difference(l.at).inDays < 7).length;
+
   Map<String, dynamic> toJson() =>
-      {'id': id, 'name': name, 'swap': swap, 'urges': urges, 'log': log.map((e) => e.toJson()).toList()};
+      {'id': id, 'name': name, 'swap': swap, 'log': log.map((e) => e.toJson()).toList(), 'held': heldDays.toList()};
   factory ReduceHabit.fromJson(Map<String, dynamic> j) => ReduceHabit(
       id: j['id'],
       name: j['name'],
-      swap: j['swap'],
-      urges: j['urges'] ?? 0,
-      log: (j['log'] as List? ?? []).map((e) => UrgeLog.fromJson(e)).toList());
+      swap: j['swap'] ?? '',
+      log: (j['log'] as List? ?? []).map((e) => UrgeLog.fromJson(e)).toList(),
+      heldDays: {...(j['held'] as List? ?? []).cast<String>()});
 }
 
 class UrgeLog {
@@ -143,12 +153,10 @@ class UrgeLog {
 }
 
 class Goal {
-  Goal({String? id, required this.name, required this.why, required this.pct, required this.target, required this.est, this.late = false, required this.lastTouched})
-      : id = id ?? newId();
+  Goal({String? id, required this.name, this.why = '', this.pct = 0, this.target = '', required this.lastTouched}) : id = id ?? newId();
   final String id;
-  String name, why, target, est;
+  String name, why, target;
   int pct;
-  bool late;
   DateTime lastTouched;
 
   int get days => DateTime.now().difference(lastTouched).inDays;
@@ -156,25 +164,10 @@ class Goal {
   String get state => days >= 7 ? 'wilting' : days >= 3 ? 'growing' : 'thriving';
   double get vitality => switch (state) { 'wilting' => .35, 'growing' => .7, _ => 1.0 };
 
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'why': why,
-        'pct': pct,
-        'target': target,
-        'est': est,
-        'late': late,
-        'lastTouched': lastTouched.toIso8601String()
-      };
+  Map<String, dynamic> toJson() =>
+      {'id': id, 'name': name, 'why': why, 'pct': pct, 'target': target, 'lastTouched': lastTouched.toIso8601String()};
   factory Goal.fromJson(Map<String, dynamic> j) => Goal(
-      id: j['id'],
-      name: j['name'],
-      why: j['why'] ?? '',
-      pct: j['pct'] ?? 0,
-      target: j['target'] ?? '',
-      est: j['est'] ?? '',
-      late: j['late'] ?? false,
-      lastTouched: DateTime.parse(j['lastTouched']));
+      id: j['id'], name: j['name'], why: j['why'] ?? '', pct: j['pct'] ?? 0, target: j['target'] ?? '', lastTouched: DateTime.parse(j['lastTouched']));
 }
 
 class ProjTask {
@@ -182,6 +175,7 @@ class ProjTask {
   final String id;
   String title, est, when;
   bool done;
+  double get hours => double.tryParse(est.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0;
   Map<String, dynamic> toJson() => {'id': id, 't': title, 'est': est, 'when': when, 'done': done};
   factory ProjTask.fromJson(Map<String, dynamic> j) =>
       ProjTask(id: j['id'], title: j['t'], est: j['est'], when: j['when'], done: j['done'] ?? false);
@@ -200,19 +194,28 @@ class Milestone {
 const projectStatuses = ['Idea', 'Active', 'Paused', 'Shipped'];
 
 class Project {
-  Project({String? id, required this.name, required this.goal, required this.status, this.pct = 0, this.last = '-', this.notes = '', this.logged = 0, this.estimate = 0, this.reward = '', List<Milestone>? milestones})
+  Project({String? id, required this.name, required this.goal, required this.status, this.notes = '', this.reward = '', DateTime? lastActive, List<Milestone>? milestones})
       : id = id ?? newId(),
+        lastActive = lastActive ?? DateTime.now(),
         milestones = milestones ?? [];
   final String id;
-  String name, goal, status, last, notes, reward;
-  int pct;
-  double logged, estimate;
+  String name, goal, status, notes, reward;
+  DateTime lastActive;
   final List<Milestone> milestones;
 
+  List<ProjTask> get allTasks => milestones.expand((m) => m.tasks).toList();
   int get computedPct {
-    final all = milestones.expand((m) => m.tasks).toList();
-    if (all.isEmpty) return pct;
+    final all = allTasks;
+    if (all.isEmpty) return status == 'Shipped' ? 100 : 0;
     return (all.where((t) => t.done).length / all.length * 100).round();
+  }
+
+  double get estimateHours => allTasks.fold(0, (a, t) => a + t.hours);
+  double get doneHours => allTasks.where((t) => t.done).fold(0, (a, t) => a + t.hours);
+
+  String get lastLabel {
+    final d = DateTime.now().difference(lastActive).inDays;
+    return d == 0 ? 'today' : '${d}d';
   }
 
   Map<String, dynamic> toJson() => {
@@ -220,12 +223,9 @@ class Project {
         'name': name,
         'goal': goal,
         'status': status,
-        'pct': pct,
-        'last': last,
         'notes': notes,
-        'logged': logged,
-        'estimate': estimate,
         'reward': reward,
+        'lastActive': lastActive.toIso8601String(),
         'milestones': milestones.map((m) => m.toJson()).toList()
       };
   factory Project.fromJson(Map<String, dynamic> j) => Project(
@@ -233,23 +233,24 @@ class Project {
       name: j['name'],
       goal: j['goal'],
       status: j['status'],
-      pct: j['pct'] ?? 0,
-      last: _dash(j['last'] ?? '-'),
       notes: j['notes'] ?? '',
-      logged: (j['logged'] as num? ?? 0).toDouble(),
-      estimate: (j['estimate'] as num? ?? 0).toDouble(),
       reward: j['reward'] ?? '',
+      lastActive: _date(j['lastActive']),
       milestones: (j['milestones'] as List? ?? []).map((e) => Milestone.fromJson(e)).toList());
 }
 
-/// Planner block. kind: done | missed | cal | plan | new
+/// Planner block. kind: done | missed | plan | new
 class Block {
-  Block({required this.day, required this.start, required this.len, required this.title, required this.kind});
+  Block({required this.day, required this.start, required this.len, required this.title, required this.kind, String? week})
+      : week = week ?? weekKey(DateTime.now());
   int day, start, len;
   String title, kind;
-  Map<String, dynamic> toJson() => {'d': day, 's': start, 'l': len, 't': title, 'k': kind};
+
+  /// Week the block belongs to (weekKey); the planner shows the current week.
+  String week;
+  Map<String, dynamic> toJson() => {'d': day, 's': start, 'l': len, 't': title, 'k': kind, 'w': week};
   factory Block.fromJson(Map<String, dynamic> j) =>
-      Block(day: j['d'], start: j['s'], len: j['l'], title: j['t'], kind: j['k']);
+      Block(day: j['d'], start: j['s'], len: j['l'], title: j['t'], kind: j['k'], week: j['w']);
 }
 
 class Unscheduled {
@@ -263,11 +264,43 @@ class Unscheduled {
 }
 
 class Contract {
-  Contract({required this.title, required this.stake, required this.due, this.status = 'ON TRACK'});
-  String title, stake, due, status;
-  Map<String, dynamic> toJson() => {'t': title, 'stake': stake, 'due': due, 'status': status};
-  factory Contract.fromJson(Map<String, dynamic> j) =>
-      Contract(title: j['t'], stake: j['stake'], due: j['due'], status: j['status']);
+  Contract({String? id, required this.title, required this.stake, required this.dueDate, this.flagged = false}) : id = id ?? newId();
+  final String id;
+  String title, stake;
+  DateTime dueDate;
+
+  /// Manually marked at risk.
+  bool flagged;
+
+  /// OVERDUE after the due day; AT RISK when flagged or due within 2 days.
+  String get status {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final due = DateTime(dueDate.year, dueDate.month, dueDate.day);
+    if (today.isAfter(due)) return 'OVERDUE';
+    if (flagged || due.difference(today).inDays <= 2) return 'AT RISK';
+    return 'ON TRACK';
+  }
+
+  Map<String, dynamic> toJson() => {'id': id, 't': title, 'stake': stake, 'dueDate': dueDate.toIso8601String(), 'flagged': flagged};
+  factory Contract.fromJson(Map<String, dynamic> j) => Contract(
+        id: j['id'],
+        title: j['t'],
+        stake: j['stake'],
+        dueDate: _date(j['dueDate']) ?? _parseLegacyDue(j['due']) ?? DateTime.now().add(const Duration(days: 7)),
+        flagged: j['flagged'] ?? j['status'] == 'AT RISK',
+      );
+
+  /// v1 stored due dates as text like "Oct 31".
+  static DateTime? _parseLegacyDue(Object? v) {
+    if (v is! String) return null;
+    const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    final m = RegExp(r'([A-Za-z]{3})\w*\s+(\d{1,2})').firstMatch(v);
+    if (m == null) return null;
+    final mi = months.indexOf(m.group(1)!.toLowerCase());
+    if (mi < 0) return null;
+    return DateTime(DateTime.now().year, mi + 1, int.parse(m.group(2)!));
+  }
 }
 
 class Proof {
@@ -277,12 +310,24 @@ class Proof {
   factory Proof.fromJson(Map<String, dynamic> j) => Proof(date: j['date'], title: j['t'], goal: j['goal']);
 }
 
-class Reward {
-  Reward({required this.name, required this.pct, required this.unlock});
-  String name, unlock;
-  int pct;
-  Map<String, dynamic> toJson() => {'name': name, 'pct': pct, 'unlock': unlock};
-  factory Reward.fromJson(Map<String, dynamic> j) => Reward(name: j['name'], pct: j['pct'], unlock: j['unlock']);
+/// A completed focus session.
+class FocusSession {
+  FocusSession({required this.at, required this.minutes, required this.goal, required this.task});
+  final DateTime at;
+  final int minutes;
+  final String goal, task;
+  Map<String, dynamic> toJson() => {'at': at.toIso8601String(), 'm': minutes, 'goal': goal, 'task': task};
+  factory FocusSession.fromJson(Map<String, dynamic> j) => FocusSession(at: DateTime.parse(j['at']), minutes: j['m'], goal: j['goal'] ?? '', task: j['task'] ?? '');
+}
+
+/// A friction-gate decision: opened the site anyway (Path A) or went back.
+class GateEvent {
+  GateEvent({required this.at, required this.site, required this.opened, this.reason = ''});
+  final DateTime at;
+  final String site, reason;
+  final bool opened;
+  Map<String, dynamic> toJson() => {'at': at.toIso8601String(), 'site': site, 'opened': opened, 'reason': reason};
+  factory GateEvent.fromJson(Map<String, dynamic> j) => GateEvent(at: DateTime.parse(j['at']), site: j['site'], opened: j['opened'], reason: j['reason'] ?? '');
 }
 
 class ChatMsg {

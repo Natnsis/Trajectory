@@ -15,7 +15,20 @@ class VisionScreen extends StatelessWidget {
       PageHeader(eyebrow: 'Vision', title: 'What all of this is for', actions: [
         TourTarget(id: 'vision.add', child: Btn('+ Goal', size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), onTap: () => editGoal(context, null))),
       ]),
-      TourTarget(id: 'vision.goals', child: Grid(columns: 2, equalHeight: false, children: [for (final g in s.goals) _GoalCard(g: g)])),
+      TourTarget(
+        id: 'vision.goals',
+        child: s.goals.isEmpty
+            ? Panel(
+                padding: const EdgeInsets.all(28),
+                child: VStack(gap: 8, cross: CrossAxisAlignment.start, children: [
+                  const Strong('No goals yet', size: 16),
+                  const Muted('Name 3 to 5 things you want to be true in a year or two. Projects, tasks and focus time all roll up to them.', size: 13.5),
+                  const SizedBox(height: 6),
+                  Btn('Add your first goal', kind: BtnKind.primary, size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), onTap: () => editGoal(context, null)),
+                ]),
+              )
+            : Grid(columns: 2, equalHeight: false, children: [for (final g in s.goals) _GoalCard(g: g)]),
+      ),
     ]);
   }
 }
@@ -90,10 +103,7 @@ class _GoalCard extends StatelessWidget {
                 ]),
               ),
             ]),
-            Row(children: [
-              Expanded(child: _kv(t, 'Target', g.target, t.ink)),
-              Expanded(child: _kv(t, 'At current pace', g.est, g.late ? t.a : t.b)),
-            ]),
+            if (g.target.isNotEmpty) _kv(t, 'Target', g.target, t.ink),
             if (g.why.isNotEmpty)
               Container(
                 padding: const EdgeInsets.only(left: 10),

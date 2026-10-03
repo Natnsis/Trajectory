@@ -87,7 +87,9 @@ void main() {
     final s = AppState(Storage.at(dir), coach: CoachService(client: MockClient((_) async => throw Exception('offline'))));
     await s.load();
     s.profile.aiProvider = 'None';
-    final open = s.tasks.where((t) => !t.done).length;
+    s.addTask('write report 9am');
+    s.addTask('call bank 2pm');
+    final open = s.todayTasks.where((t) => !t.done).length;
     await s.generatePlan();
     expect(s.planDraft, isNotNull);
     expect(s.planDraft!.length, open);
@@ -103,7 +105,7 @@ void main() {
     final dir = await Directory.systemTemp.createTemp('traj_ai2');
     late AppState s;
     s = AppState(Storage.at(dir), coach: CoachService(client: MockClient((r) async {
-      final firstOpen = s.tasks.firstWhere((t) => !t.done);
+      final firstOpen = s.todayTasks.firstWhere((t) => !t.done);
       return ok(jsonEncode({
         'summary': 'Tests first.',
         'schedule': [
@@ -113,6 +115,7 @@ void main() {
       }));
     })));
     await s.load();
+    s.addTask('write tests 9am');
     s.apiKey = key;
     await s.generatePlan();
     expect(s.planSummary, 'Tests first.');

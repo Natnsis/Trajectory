@@ -5,6 +5,7 @@ import '../state/models.dart';
 import '../theme/tokens.dart';
 import '../shell/tour.dart';
 import '../widgets/common.dart';
+import '../theme/icons.dart';
 
 class ProjectDetailScreen extends StatelessWidget {
   const ProjectDetailScreen({super.key});
@@ -17,7 +18,6 @@ class ProjectDetailScreen extends StatelessWidget {
     if (p == null) {
       return ScreenPage(children: [Btn('← Projects', kind: BtnKind.text, size: 12.5, onTap: () => s.go(Screen.projects)), const Muted('No project selected.')]);
     }
-    final over = p.estimate > 0 ? ((p.estimate - p.logged) / 2).round() : 0;
     return ScreenPage(children: [
       VStack(children: [
         Row(children: [Btn('← Projects', kind: BtnKind.text, size: 12.5, onTap: () => s.go(Screen.projects))]),
@@ -30,8 +30,8 @@ class ProjectDetailScreen extends StatelessWidget {
             ]),
           ),
           TourTarget(id: 'project.stats', child: HStack(gap: 28, children: [
-            Stat(label: 'Time logged', value: '${p.logged.round()}h', suffix: p.estimate > 0 ? '/ ${p.estimate.round()}h est' : null),
-            Stat(label: 'Progress', value: '${p.computedPct}%', suffix: over > 0 ? '+${over}d at real velocity' : null, suffixColor: t.a),
+            if (p.estimateHours > 0) Stat(label: 'Estimated work', value: '${p.doneHours.round()}h', suffix: '/ ${p.estimateHours.round()}h done'),
+            Stat(label: 'Progress', value: '${p.computedPct}%', suffix: '${p.allTasks.where((x) => x.done).length}/${p.allTasks.length} tasks'),
             _StatusMenu(p: p),
           ])),
         ]),
@@ -58,16 +58,22 @@ class ProjectDetailScreen extends StatelessWidget {
               _Notes(p: p),
             ]),
           )),
-          if (p.reward.isNotEmpty)
-            Panel(
-              padding: const EdgeInsets.all(18),
-              child: VStack(gap: 8, children: [
-                const Muted('Reward on ship', size: 12.5),
+          Panel(
+            padding: const EdgeInsets.all(18),
+            child: VStack(gap: 8, children: [
+              Row(children: [
+                const Expanded(child: Muted('Reward on ship', size: 12.5)),
+                Btn(p.reward.isEmpty ? 'Set reward' : 'Edit', kind: BtnKind.text, size: 12, onTap: () => _setReward(context, p)),
+              ]),
+              if (p.reward.isEmpty)
+                const Muted('Pre-commit something you want. It unlocks when the project ships.', size: 12.5)
+              else ...[
                 Strong(p.reward),
                 Bar(pct: p.computedPct.toDouble()),
-                Muted('Unlocks when ${p.milestones.isEmpty ? 'the project ships' : '${p.milestones.last.name} is checked'}', size: 12),
-              ]),
-            ),
+                Muted('${p.computedPct}% there. Unlocks when every task is done.', size: 12),
+              ],
+            ]),
+          ),
           Panel(
             padding: const EdgeInsets.all(18),
             child: Text.rich(TextSpan(style: t.body(size: 12.5, color: t.mute), children: [
@@ -81,6 +87,23 @@ class ProjectDetailScreen extends StatelessWidget {
         ]),
       ),
     ]);
+  }
+
+  void _setReward(BuildContext context, Project p) {
+    final c = TextEditingController(text: p.reward);
+    showTDialog(context, title: 'Reward on ship', body: (ctx) {
+      return VStack(gap: 12, children: [
+        Field(controller: c, hint: 'e.g. A new keyboard', autofocus: true),
+        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          Btn('Cancel', size: 13, onTap: () => Navigator.pop(ctx)),
+          const SizedBox(width: 8),
+          Btn('Save', kind: BtnKind.primary, size: 13, onTap: () {
+            ctx.appRead.setReward(p, c.text.trim());
+            Navigator.pop(ctx);
+          }),
+        ]),
+      ]);
+    });
   }
 
   void _addMilestone(BuildContext context, Project p) {
@@ -164,9 +187,23 @@ class _MilestoneViewState extends State<_MilestoneView> {
             for (final task in m.tasks)
               Tap(
                 onTap: () => s.toggleProjTask(widget.p, task),
-                child: Divided(
+                builder: (_, hover, child) => Divided(
                   padding: const EdgeInsets.symmetric(vertical: 7),
                   child: Row(children: [
+                    Expanded(child: child),
+                    if (hover && !task.done) ...[
+                      Tooltip(
+                        message: 'Add to today',
+                        child: Tap(onTap: () => s.projTaskToToday(widget.p, task), child: Padding(padding: const EdgeInsets.all(5), child: Icon(Ph.sunHorizon, size: 15, color: t.mute))),
+                      ),
+                      Tooltip(
+                        message: 'Send to planner',
+                        child: Tap(onTap: () => s.projTaskToPlanner(widget.p, task), child: Padding(padding: const EdgeInsets.all(5), child: Icon(Ph.calendarPlus, size: 15, color: t.mute))),
+                      ),
+                    ],
+                  ]),
+                ),
+                child: Row(children: [
                     TickBox(done: task.done, size: 15, radius: 4),
                     const SizedBox(width: 10),
                     Expanded(
@@ -179,8 +216,8 @@ class _MilestoneViewState extends State<_MilestoneView> {
                       ),
                     ),
                     Text(task.est, style: t.mono(size: 11.5, color: t.mute)),
+                    const SizedBox(width: 6),
                   ]),
-                ),
               ),
             Divided(
               padding: const EdgeInsets.symmetric(vertical: 2),

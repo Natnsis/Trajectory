@@ -29,12 +29,13 @@ class _TodayScreenState extends State<TodayScreen> {
           child: TourTarget(id: 'today.header', child: VStack(children: [
             Eyebrow(longDate(DateTime.now())),
             const SizedBox(height: 4),
-            Heading('${s.greeting()}, ${s.profile.name}'),
+            Heading(s.profile.name.isEmpty ? s.greeting() : '${s.greeting()}, ${s.profile.name}'),
             const SizedBox(height: 4),
-            Text.rich(TextSpan(style: t.body(color: t.mute), children: [
-              const TextSpan(text: 'Every finished task is a vote for '),
-              TextSpan(text: '“I\'m someone who ${s.profile.identity}”', style: t.body(color: t.ink)),
-            ])),
+            if (s.profile.identity.isNotEmpty)
+              Text.rich(TextSpan(style: t.body(color: t.mute), children: [
+                const TextSpan(text: 'Every finished task is a vote for '),
+                TextSpan(text: '“I\'m someone who ${s.profile.identity}”', style: t.body(color: t.ink)),
+              ])),
           ])),
         ),
         const SizedBox(width: 20),
@@ -43,8 +44,8 @@ class _TodayScreenState extends State<TodayScreen> {
           child: VStack(cross: CrossAxisAlignment.end, gap: 10, children: [
             KpiStrip(items: [
               ('Votes', '+${s.votes}', t.b),
-              ('Momentum', '${s.momentum}', t.chartA),
-              ('Done', '${s.doneTasks}/${s.tasks.length}', t.mute),
+              ('Momentum', s.momentumLabel, t.chartA),
+              ('Done', '${s.doneTasks}/${s.todayTasks.length}', t.mute),
               ('Path B', '${s.pathPct}%', t.chartB),
             ]),
             SizedBox(width: 300, child: _PathMeter(pct: s.pathPct)),
@@ -60,7 +61,7 @@ class _TodayScreenState extends State<TodayScreen> {
             child: BareField(
               controller: _cap,
               focusNode: _focus,
-              hint: 'Capture anything, like “fix JWT bug tomorrow 6pm”',
+              hint: 'Capture anything, like “call the dentist tomorrow 3pm”',
               onChanged: (_) => setState(() {}),
               onSubmitted: (v) {
                 s.addTask(v);
@@ -80,7 +81,19 @@ class _TodayScreenState extends State<TodayScreen> {
           const SizedBox(width: 6),
         ]),
       )),
-      if (!s.planAcceptedToday && s.tasks.any((t) => !t.done)) const TourTarget(id: 'today.plan', child: _PlanCard()),
+      if (s.profile.notifyMissed && s.profile.partnerEmail.isNotEmpty && s.missedStreak >= 3 && !s.missedNoticeDismissed)
+        Callout(
+          color: t.aSoft,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(children: [
+            Expanded(child: Text('${s.missedStreak} rough days in a row. You asked to tell ${s.profile.partnerName.isEmpty ? 'your partner' : s.profile.partnerName} when this happens.')),
+            const SizedBox(width: 12),
+            Btn('Draft email', kind: BtnKind.primary, size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 7), onTap: s.emailPartnerMissed),
+            const SizedBox(width: 8),
+            Btn('Not now', kind: BtnKind.text, size: 12.5, onTap: s.dismissMissedNotice),
+          ]),
+        ),
+      if (!s.planAcceptedToday && s.todayTasks.any((t) => !t.done)) const TourTarget(id: 'today.plan', child: _PlanCard()),
       TwoCol(
         left: VStack(gap: 16, children: [
           TourTarget(id: 'today.next', child: Panel(
@@ -88,12 +101,12 @@ class _TodayScreenState extends State<TodayScreen> {
             child: VStack(gap: 10, children: [
               Text(n.time == '-' ? 'Next up' : 'Next up at ${n.time}${n.where == '-' ? '' : ', ${n.where}'}', style: t.body(size: 12.5, color: t.mute)),
               Heading(n.title, size: 26),
-              Text('Serves → ${n.goal}', style: t.body(size: 13, color: t.b)),
+              if (n.id != '_none') Text('Serves → ${n.goal}', style: t.body(size: 13, color: t.b)),
               const SizedBox(height: 6),
               Row(children: [
                 Btn('Start Focus · ${s.focusLen ~/ 60} min', kind: BtnKind.primary, onTap: n.id == '_none' ? null : s.startFocus),
                 const SizedBox(width: 8),
-                Btn('Just 10 minutes', onTap: s.shrinkNext),
+                Btn('Just 10 minutes', onTap: n.id == '_none' ? null : s.shrinkNext),
               ]),
             ]),
           )),
@@ -104,23 +117,28 @@ class _TodayScreenState extends State<TodayScreen> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   const Strong("Today's tasks"),
-                  Text('${s.doneTasks}/${s.tasks.length} done', style: t.mono(size: 12, color: t.mute)),
+                  Text('${s.doneTasks}/${s.todayTasks.length} done', style: t.mono(size: 12, color: t.mute)),
                 ]),
               ),
-              for (final task in s.tasks) _TaskRow(task: task),
-              if (s.tasks.isEmpty) const Divided(child: Muted('Nothing yet. Capture something above.')),
+              for (final task in s.todayTasks) _TaskRow(task: task),
+              if (s.todayTasks.isEmpty)
+                const Divided(child: Muted('No tasks for today. Type one in the capture bar above, like "call the bank 3pm".')),
             ]),
           )),
         ]),
         right: VStack(gap: 16, children: [
           TourTarget(id: 'today.momentum', child: Panel(
             child: Row(children: [
-              Ring(pct: s.momentum.toDouble(), size: 84, thickness: 8, child: Text('${s.momentum}', style: t.mono(size: 24, weight: FontWeight.w600))),
+              Ring(pct: s.momentum.toDouble(), size: 84, thickness: 8, child: Text(s.momentumLabel, style: t.mono(size: 24, weight: FontWeight.w600))),
               const SizedBox(width: 18),
-              const Expanded(
+              Expanded(
                 child: VStack(children: [
-                  Strong('Momentum'),
-                  Muted('Decays slowly on misses, recovers fast. One missed day costs ~3 points; one good day wins back 6.', size: 12.5),
+                  const Strong('Momentum'),
+                  Muted(
+                      s.hasMomentum
+                          ? 'Your completion rate over the last 14 days, weighted toward recent days. A miss costs a little; a good day wins most of it back.'
+                          : 'Starts once you check off your first task or habit.',
+                      size: 12.5),
                 ]),
               ),
             ]),
@@ -132,7 +150,15 @@ class _TodayScreenState extends State<TodayScreen> {
                 const Strong('Habit check-ins'),
                 Btn('All habits →', kind: BtnKind.text, size: 12, onTap: () => s.go(Screen.habits)),
               ]),
-              Row(children: [for (final h in s.checkIns) Expanded(child: _HabitDot(h: h))]),
+              if (s.habitCount == 0)
+                const Muted('No habits yet. Add one on the Habits page and it shows up here for a daily check-in.', size: 12.5)
+              else
+                Wrap(spacing: 8, runSpacing: 12, children: [
+                  for (final h in s.build)
+                    _HabitDot(name: h.name, meta: h.target, done: h.doneOn(DateTime.now()), bad: false, onTap: () => s.toggleHabit(h)),
+                  for (final h in s.reduce)
+                    _HabitDot(name: 'No ${h.name.toLowerCase()}', meta: 'held today', done: h.heldOn(DateTime.now()), bad: true, onTap: () => s.toggleHeld(h)),
+                ]),
             ]),
           )),
           Panel(
@@ -150,10 +176,17 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   String _weekLine(AppState s) {
-    final done = s.blocks.where((b) => b.kind == 'done').fold<int>(0, (a, b) => a + b.len);
-    final planned = s.blocks.where((b) => b.kind != 'cal').fold<int>(0, (a, b) => a + b.len);
-    final urges = s.reduce.fold<int>(0, (a, h) => a + h.urges);
-    return 'You completed ${done}h of the ${planned}h you planned. ${s.contracts.where((c) => c.status == 'AT RISK').length} commitment(s) at risk. $urges urges logged and resisted.';
+    final wb = s.weekBlocks;
+    final done = wb.where((b) => b.kind == 'done').fold<int>(0, (a, b) => a + b.len);
+    final planned = wb.fold<int>(0, (a, b) => a + b.len);
+    final focus = s.sessionsSince(s.weekStart).fold<int>(0, (a, x) => a + x.minutes);
+    final urges = s.reduce.fold<int>(0, (a, h) => a + h.urgesThisWeek);
+    final parts = <String>[
+      if (planned > 0) 'You completed ${done}h of the ${planned}h you planned.',
+      if (focus > 0) '${(focus / 60).toStringAsFixed(1)}h of focus logged.',
+      if (urges > 0) '$urges urges logged.',
+    ];
+    return parts.isEmpty ? 'Nothing logged this week yet. Plan blocks, run a focus session, or check off a task and this fills in.' : parts.join(' ');
   }
 }
 
@@ -222,15 +255,27 @@ class _TaskRow extends StatelessWidget {
                 TextSpan(
                     text: task.title,
                     style: t.body().copyWith(decoration: task.done ? TextDecoration.lineThrough : null, decorationColor: t.ink)),
-                TextSpan(text: ' · ${task.where}', style: t.body(size: 12, color: t.mute)),
+                if (task.where != '-') TextSpan(text: ' · ${task.where}', style: t.body(size: 12, color: t.mute)),
+                if (task.date.compareTo(dayKey(DateTime.now())) < 0) TextSpan(text: '  carried over', style: t.body(size: 12, color: t.a)),
               ])),
             ),
           ),
-          if (hover)
-            Tap(
-              onTap: () => s.removeTask(task),
-              child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Icon(Ph.x, size: 14, color: t.mute)),
+          if (hover) ...[
+            Tooltip(
+              message: 'Edit',
+              child: Tap(
+                onTap: () => editTask(context, task),
+                child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Icon(Ph.pencilSimple, size: 14, color: t.mute)),
+              ),
             ),
+            Tooltip(
+              message: 'Delete',
+              child: Tap(
+                onTap: () => s.removeTask(task),
+                child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Icon(Ph.x, size: 14, color: t.mute)),
+              ),
+            ),
+          ],
           Chip2(task.goal),
         ]),
       ),
@@ -240,14 +285,14 @@ class _TaskRow extends StatelessWidget {
 }
 
 class _HabitDot extends StatelessWidget {
-  const _HabitDot({required this.h});
-  final CheckIn h;
+  const _HabitDot({required this.name, required this.meta, required this.done, required this.bad, required this.onTap});
+  final String name, meta;
+  final bool done, bad;
+  final VoidCallback onTap;
   @override
   Widget build(BuildContext context) {
-    final s = context.appRead;
     final t = context.t;
-    final done = h.doneOn(DateTime.now());
-    final c = h.bad ? t.a : t.b;
+    final c = bad ? t.a : t.b;
     final dot = AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       width: 44,
@@ -256,19 +301,22 @@ class _HabitDot extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: done ? c : Colors.transparent,
-        border: h.bad ? null : Border.all(color: c, width: 2),
+        border: bad ? null : Border.all(color: c, width: 2),
       ),
       child: done ? Icon(Ph.check, size: 20, color: t.bInk) : null,
     );
-    return Tap(
-      onTap: () => s.toggleCheckIn(h),
-      pressScale: .92,
-      child: Column(children: [
-        h.bad ? DashedBox(color: c, radius: 22, width: 2, child: dot) : dot,
-        const SizedBox(height: 6),
-        Text(h.name, style: t.body(size: 12)),
-        Text(h.meta, style: t.mono(size: 10.5, color: t.mute)),
-      ]),
+    return SizedBox(
+      width: 84,
+      child: Tap(
+        onTap: onTap,
+        pressScale: .92,
+        child: Column(children: [
+          bad ? DashedBox(color: c, radius: 22, width: 2, child: dot) : dot,
+          const SizedBox(height: 6),
+          Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.body(size: 12)),
+          if (meta.isNotEmpty) Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.mono(size: 10.5, color: t.mute)),
+        ]),
+      ),
     );
   }
 }
@@ -292,7 +340,7 @@ class _PlanCard extends StatelessWidget {
       body = Row(children: [
         Expanded(
           child: Text(s.aiReady
-              ? 'Let AI schedule your ${s.tasks.where((x) => !x.done).length} open tasks around your ${s.profile.peakStart.toString().padLeft(2, '0')}-${s.profile.peakEnd} peak.'
+              ? 'Let AI schedule your ${s.todayTasks.where((x) => !x.done).length} open tasks around your ${s.profile.peakStart.toString().padLeft(2, '0')}-${s.profile.peakEnd} peak.'
               : 'Draft a schedule for today. Add an AI key in Settings for a smarter plan.'),
         ),
         const SizedBox(width: 14),
@@ -336,3 +384,70 @@ class _PlanCard extends StatelessWidget {
     );
   }
 }
+
+/// Edit a task: title, time, day, goal and place.
+void editTask(BuildContext context, Task task) {
+  final s = context.appRead;
+  final title = TextEditingController(text: task.title);
+  final time = TextEditingController(text: task.time == '-' ? '' : task.time);
+  final where = TextEditingController(text: task.where == '-' ? '' : task.where);
+  var goal = task.goal;
+  var date = DateTime.tryParse(task.date) ?? DateTime.now();
+  String err = '';
+  showTDialog(context, title: 'Edit task', width: 460, body: (ctx) {
+    return StatefulBuilder(builder: (ctx, setState) {
+      final t = ctx.t;
+      final goals = ['Inbox', ...s.goalNames];
+      if (!goals.contains(goal)) goals.add(goal);
+      return VStack(gap: 12, children: [
+        Field(controller: title, hint: 'Task', autofocus: true),
+        Row(children: [
+          Expanded(child: Field(controller: time, hint: 'Time (HH:MM, optional)', mono: true)),
+          const SizedBox(width: 8),
+          Expanded(child: Field(controller: where, hint: 'Where (optional)')),
+        ]),
+        Row(children: [
+          Text('Day', style: t.body(size: 12.5, color: t.mute)),
+          const SizedBox(width: 10),
+          Pills(
+            options: const [(0, 'Today'), (1, 'Tomorrow')],
+            value: date.difference(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)).inDays.clamp(-1, 2) == 1 ? 1 : 0,
+            onChanged: (v) => setState(() => date = DateTime.now().add(Duration(days: v))),
+          ),
+          const Spacer(),
+          Text('Goal', style: t.body(size: 12.5, color: t.mute)),
+          const SizedBox(width: 8),
+          DropdownButton<String>(
+            value: goal,
+            isDense: true,
+            underline: const SizedBox(),
+            dropdownColor: t.panel2,
+            style: t.body(size: 13),
+            items: [for (final g in goals) DropdownMenuItem(value: g, child: Text(g))],
+            onChanged: (v) => setState(() => goal = v!),
+          ),
+        ]),
+        if (err.isNotEmpty) Text(err, style: t.mono(size: 12, color: t.a)),
+        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          Btn('Cancel', size: 13, onTap: () => Navigator.pop(ctx)),
+          const SizedBox(width: 8),
+          Btn('Save', kind: BtnKind.primary, size: 13, onTap: () {
+            final tm = time.text.trim();
+            final m = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(tm);
+            if (tm.isNotEmpty && (m == null || int.parse(m.group(1)!) > 23 || int.parse(m.group(2)!) > 59)) {
+              return setState(() => err = 'Use a 24-hour time like 09:30');
+            }
+            s.updateTask(task,
+                title: title.text,
+                time: m == null ? '' : '${m.group(1)!.padLeft(2, '0')}:${m.group(2)}',
+                where: where.text,
+                goal: goal,
+                date: dayKey(date));
+            Navigator.pop(ctx);
+          }),
+        ]),
+      ]);
+    });
+  });
+}
+

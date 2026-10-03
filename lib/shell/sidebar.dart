@@ -157,10 +157,10 @@ class _Panel extends StatelessWidget {
     final s = context.app;
     final t = context.t;
     final badges = <Screen, (int, bool)>{
-      Screen.today: (s.tasks.where((x) => !x.done).length, false),
+      Screen.today: (s.todayTasks.where((x) => !x.done).length, false),
       Screen.planner: (s.unscheduled.length, false),
       Screen.vision: (s.goals.where((g) => g.drift).length, true),
-      Screen.commit: (s.contracts.where((c) => c.status == 'AT RISK').length, true),
+      Screen.commit: (s.contracts.where((c) => c.status != 'ON TRACK').length, true),
     };
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 10, 4, 10),
@@ -216,7 +216,7 @@ class _Panel extends StatelessWidget {
                   borderRadius: BorderRadius.circular(t.rs + 2),
                 ),
                 child: Row(children: [
-                  Ring(pct: s.momentum.toDouble(), size: 32, thickness: 3, child: Text('${s.momentum}', style: t.body(size: 11, weight: FontWeight.w700))),
+                  Ring(pct: s.momentum.toDouble(), size: 32, thickness: 3, child: Text(s.momentumLabel, style: t.body(size: 11, weight: FontWeight.w700))),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -271,8 +271,8 @@ class _Workspace extends StatelessWidget {
         child: Row(children: [
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(s.profile.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.body(size: 14.5, weight: FontWeight.w700, height: 1.25)),
-              Text('Someone who ${s.profile.identity}', maxLines: 1, overflow: TextOverflow.ellipsis, style: t.body(size: 12, color: t.mute, height: 1.35)),
+              Text(s.profile.name.isEmpty ? 'Trajectory' : s.profile.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.body(size: 14.5, weight: FontWeight.w700, height: 1.25)),
+              Text(s.profile.identity.isEmpty ? 'Set your identity in Settings' : 'Someone who ${s.profile.identity}', maxLines: 1, overflow: TextOverflow.ellipsis, style: t.body(size: 12, color: t.mute, height: 1.35)),
             ]),
           ),
           Icon(Ph.caretUpDown, size: 16, color: t.mute),
@@ -351,7 +351,7 @@ class TrayWidget extends StatelessWidget {
               const Spacer(),
               Btn(s.focusRun ? 'Pause' : 'Start', kind: BtnKind.primary, size: 12.5, pad: const EdgeInsets.symmetric(horizontal: 12, vertical: 7), onTap: s.toggleTimer),
             ]),
-            Text('Momentum ${s.momentum}. ${s.votes} identity votes today.', style: t.body(size: 12, color: t.mute)),
+            Text(s.hasMomentum ? 'Momentum ${s.momentum}. ${s.votes} votes today.' : '${s.votes} votes today.', style: t.body(size: 12, color: t.mute)),
           ]),
         ),
       ),

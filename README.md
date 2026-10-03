@@ -10,7 +10,7 @@ flutter run -d linux        # or -d macos / -d windows
 flutter test
 ```
 
-On first launch you go through onboarding: create a PIN, save a recovery phrase, then set your identity, goals, habits, rhythm, AI provider and partner. After that the app opens on the lock screen.
+The app starts empty: no demo data. Every number (momentum, votes, charts, projections, badges) is computed from what you actually log. On first launch you go through onboarding: create a PIN, save a recovery phrase, then set your identity, goals, habits, rhythm, AI provider and partner. After that the app opens on the lock screen.
 
 **Shortcuts:** `Ctrl K` command palette · `Ctrl ⇧ Space` quick capture · `Esc` closes overlays · digits/backspace on the lock screen.
 
@@ -31,7 +31,6 @@ lib/
   state/
     app_state.dart       single ChangeNotifier holding all state and actions
     models.dart          JSON-serialisable data models
-    seed.dart            demo data shown on first launch
     storage.dart         JSON file in the platform app-support folder
   services/
     security.dart        PBKDF2 PIN / recovery-phrase hashing, phrase generator
@@ -62,4 +61,4 @@ Simulated, or needs native integration later:
 - **Friction gate** is an in-app overlay. Real site blocking would need a browser extension or a hosts/DNS helper.
 - **Tray widget** is an in-app popover. A real menu-bar icon would need a plugin such as `tray_manager`.
 - **Global quick capture**: `Ctrl ⇧ Space` only works while the window has focus. System-wide would need `hotkey_manager`.
-- Accountability partner notifications, calendar sync, and the Time Ledger / Best hours charts use demo numbers. Ledger totals do include your logged focus time.
+- Accountability partner notifications and calendar sync aren't implemented (the partner settings are stored, nothing is sent).

@@ -1,4 +1,4 @@
-/// Natural-language quick capture: "fix JWT bug tomorrow 6pm".
+/// Natural-language quick capture: "call the dentist tomorrow 3pm".
 class Capture {
   Capture({required this.title, required this.time, required this.tomorrow, required this.goal});
   final String title, time, goal;
@@ -15,12 +15,6 @@ String guessGoal(String text, List<String> goalNames) {
     for (final w in g.toLowerCase().split(RegExp(r'\W+'))) {
       if (w.length > 3 && lower.contains(w)) return g;
     }
-  }
-  if (RegExp(r'jwt|bug|surge|auth|billing', caseSensitive: false).hasMatch(text)) {
-    return goalNames.firstWhere((g) => g.toLowerCase().contains('surge'), orElse: () => 'Inbox');
-  }
-  if (RegExp(r'run|gym', caseSensitive: false).hasMatch(text)) {
-    return goalNames.firstWhere((g) => g.toLowerCase().contains('run'), orElse: () => 'Inbox');
   }
   return 'Inbox';
 }

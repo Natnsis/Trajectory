@@ -5,12 +5,14 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../services/capture_parser.dart';
+import '../services/calendar.dart';
 import '../services/coach.dart';
+import '../services/platform.dart';
 import '../services/security.dart';
+import '../services/vault.dart';
 import '../shell/tour_content.dart';
 import '../theme/tokens.dart';
 import 'models.dart';
-import 'seed.dart';
 import 'storage.dart';
 
 enum Screen { lock, onboard, today, vision, projects, project, habits, planner, focus, mirror, ledger, review, commit, proof, coach, settings }
@@ -22,10 +24,18 @@ const plannerStartHour = 7;
 const plannerHours = 15;
 
 class AppState extends ChangeNotifier {
-  AppState(this._storage, {CoachService? coach}) : _coach = coach ?? CoachService();
+  AppState(this._storage, {CoachService? coach, PlatformServices? platform, CalendarService? calendar})
+      : _coach = coach ?? CoachService(),
+        platform = platform ?? const PlatformServices(),
+        _calendar = calendar ?? CalendarService();
 
   final Storage _storage;
   final CoachService _coach;
+  final PlatformServices platform;
+  final CalendarService _calendar;
+
+  /// Set by the desktop shell; quits the app (tray-aware).
+  Future<void> Function()? onQuit;
   Timer? _ticker, _toastTimer, _saveTimer;
 
   // ---------------------------------------------------------------- persisted
@@ -33,14 +43,11 @@ class AppState extends ChangeNotifier {
   Profile profile = Profile();
   String pinHash = '', pinSalt = '', phraseHash = '', phraseSalt = '';
   int autoLockMinutes = 10;
-  int nudgesPerDay = 3;
-  String quietHours = '22:30-07:00';
   String decayMetaphor = 'Plant';
   List<String> blockList = ['x.com', 'youtube.com', 'reddit.com'];
   bool localOnly = false;
 
   List<Task> tasks = [];
-  List<CheckIn> checkIns = [];
   List<BuildHabit> build = [];
   List<ReduceHabit> reduce = [];
   List<Goal> goals = [];
@@ -50,18 +57,26 @@ class AppState extends ChangeNotifier {
   List<Contract> contracts = [];
   List<bool> contractHistory = [];
   List<Proof> proof = [];
-  List<Reward> rewards = [];
   List<ChatMsg> msgs = [];
-  int votes = 0;
-  String votesDay = '';
-  bool planLocked = false;
+  List<FocusSession> sessions = [];
+  List<GateEvent> gateLog = [];
+
+  /// Votes that don't come from a task or habit (focus sessions, kept
+  /// contracts, walking away from the friction gate), per dayKey.
+  Map<String, int> extraVotes = {};
+  /// Weeks (weekKey) pre-committed on the planner.
+  Set<String> lockedWeeks = {};
+  bool notificationsOn = true;
+  bool keepInTray = true;
+
+  /// iCal (.ics) subscription URL, e.g. Google Calendar's secret address.
+  String calendarUrl = '';
   bool energy = true;
   bool aiPlanPending = true;
   bool recoveryAdded = false;
   Map<String, String> adjustments = {};
   String tone = 'Direct';
   Map<String, bool> coachContext = {'goals': true, 'tasks': true, 'habits': true, 'urges': false};
-  double focusMinutesLogged = 0;
   Set<String> toursSeen = {};
   bool glassOn = true;
   bool sidebarCollapsed = false;
@@ -110,16 +125,53 @@ class AppState extends ChangeNotifier {
   bool autoTours = true;
 
   // ---------------------------------------------------------------- lifecycle
+  // ---------------------------------------------------------------- encryption
+  /// Data key; only in memory while unlocked.
+  List<int>? _dek;
+  Map<String, dynamic>? _wrapPin, _wrapPhrase, _vaultBlob;
+
+  /// A pre-encryption (v1/v2) plaintext save waiting for the first unlock.
+  Map<String, dynamic>? _legacy;
+  String _legacyKey = '';
+  bool unlocking = false;
+
+  /// Shown once after an old save is upgraded to encryption.
+  List<String>? newPhraseToShow;
+
+  bool get isEncrypted => _wrapPin != null;
+  bool get _hasPin => isEncrypted || pinHash.isNotEmpty;
+
   Future<void> load() async {
     final data = await _storage.load();
-    apiKey = await _storage.readKey();
-    if (data == null) {
-      _seed();
-    } else {
-      _fromJson(data);
+    if (data != null) {
+      if ((data['version'] as int? ?? 1) >= 3) {
+        _readMeta(data['meta'] as Map<String, dynamic>? ?? {});
+        final keys = data['keys'] as Map<String, dynamic>? ?? {};
+        _wrapPin = keys['pin'] as Map<String, dynamic>?;
+        _wrapPhrase = keys['phrase'] as Map<String, dynamic>?;
+        _vaultBlob = data['vault'] as Map<String, dynamic>?;
+      } else {
+        final sec = data['security'] as Map<String, dynamic>? ?? {};
+        pinHash = sec['pinHash'] ?? '';
+        pinSalt = sec['pinSalt'] ?? '';
+        phraseHash = sec['phraseHash'] ?? '';
+        phraseSalt = sec['phraseSalt'] ?? '';
+        _legacyKey = await _storage.readKey();
+        if (pinHash.isEmpty) {
+          // Never onboarded: nothing to protect yet.
+          _fromJson(data);
+          apiKey = _legacyKey;
+        } else {
+          _legacy = data;
+          _pinLen = sec['pinLen'] ?? 4;
+          theme = ThemeName.values.firstWhere((t) => t.name == data['theme'], orElse: () => ThemeName.calm);
+          profile = Profile(name: (data['profile'] as Map?)?['name'] ?? '');
+          glassOn = data['glassOn'] ?? true;
+          sidebarCollapsed = data['sidebarCollapsed'] ?? false;
+        }
+      }
     }
-    _rollDay();
-    screen = pinHash.isEmpty ? Screen.onboard : Screen.lock;
+    screen = _hasPin ? Screen.lock : Screen.onboard;
     // Debug builds only: TRAJECTORY_SCREEN=today jumps straight to a screen.
     final dbg = kDebugMode ? Platform.environment['TRAJECTORY_SCREEN'] : null;
     if (dbg != null) {
@@ -132,32 +184,6 @@ class AppState extends ChangeNotifier {
     loaded = true;
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
     notifyListeners();
-  }
-
-  void _seed() {
-    tasks = seedTasks();
-    checkIns = seedCheckIns();
-    build = seedBuild();
-    reduce = seedReduce();
-    goals = seedGoals();
-    projects = seedProjects();
-    blocks = seedBlocks();
-    unscheduled = seedUnscheduled();
-    contracts = seedContracts();
-    contractHistory = seedHistory();
-    proof = seedProof();
-    rewards = seedRewards();
-    msgs = seedMsgs();
-    votes = 3;
-    votesDay = dayKey(DateTime.now());
-  }
-
-  void _rollDay() {
-    final today = dayKey(DateTime.now());
-    if (votesDay != today) {
-      votes = 0;
-      votesDay = today;
-    }
   }
 
   @override
@@ -175,7 +201,36 @@ class AppState extends ChangeNotifier {
     _saveTimer = Timer(const Duration(milliseconds: 400), save);
   }
 
-  Future<void> save() => _storage.save(toJson());
+  /// Non-sensitive settings the lock screen needs before decryption.
+  Map<String, dynamic> _meta() => {
+        'name': profile.name,
+        'theme': theme.name,
+        'glassOn': glassOn,
+        'sidebarCollapsed': sidebarCollapsed,
+        'pinLen': _pinLen,
+        'autoLock': autoLockMinutes,
+      };
+
+  void _readMeta(Map<String, dynamic> m) {
+    profile = Profile(name: m['name'] ?? '');
+    theme = ThemeName.values.firstWhere((t) => t.name == m['theme'], orElse: () => ThemeName.calm);
+    glassOn = m['glassOn'] ?? true;
+    sidebarCollapsed = m['sidebarCollapsed'] ?? false;
+    _pinLen = m['pinLen'] ?? 4;
+    autoLockMinutes = m['autoLock'] ?? 10;
+  }
+
+  /// Encrypts the whole state and writes it. No-op while locked or before
+  /// onboarding (there's nothing to save, and no key to save it with).
+  Future<void> save() async {
+    final dek = _dek, wp = _wrapPin, wph = _wrapPhrase;
+    if (dek == null || wp == null) return;
+    final payload = toJson(); // captured now, before any lock clears memory
+    final meta = _meta();
+    final vault = await Vault.encryptJson(dek, payload);
+    _vaultBlob = vault;
+    await _storage.save({'version': 3, 'meta': meta, 'keys': {'pin': wp, 'phrase': ?wph}, 'vault': vault});
+  }
 
   void _tick() {
     var dirty = false;
@@ -187,7 +242,9 @@ class AppState extends ChangeNotifier {
       focusRun = false;
       if (screen == Screen.focus) focusEnd = true;
       dirty = true;
+      _notify('Focus session done', 'Nice. Log what you finished.');
     }
+    _checkReminders();
     if (overlay == Ov.gate && gateT > 0) {
       gateT--;
       dirty = true;
@@ -210,6 +267,57 @@ class AppState extends ChangeNotifier {
 
   void touch() => _lastActivity = DateTime.now();
 
+  // ---------------------------------------------------------------- reminders
+  /// (time, title, body) reminders for today. Rebuilt while unlocked and kept
+  /// in memory (never on disk) so they still fire while the app is locked.
+  List<(DateTime, String, String)> _reminders = [];
+  final Set<String> _fired = {};
+  String _remindersDay = '';
+  DateTime _lastCalendarSync = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _notify(String title, String body) {
+    if (notificationsOn) platform.notify(title, body);
+  }
+
+  void _rebuildReminders() {
+    if (_dek == null) return; // locked: keep the last schedule
+    final now = DateTime.now();
+    final day = DateTime(now.year, now.month, now.day);
+    final r = <(DateTime, String, String)>[];
+    for (final t in todayTasks.where((t) => !t.done && RegExp(r'^\d{2}:\d{2}$').hasMatch(t.time))) {
+      final p = t.time.split(':');
+      r.add((day.add(Duration(hours: int.parse(p[0]), minutes: int.parse(p[1]))), 'Now: ${t.title}', t.goal == 'Inbox' ? 'From your task list' : 'Serves ${t.goal}'));
+    }
+    for (final b in [...weekBlocks, ...calendarBlocks].where((b) => b.day == todayIndex && (b.kind == 'plan' || b.kind == 'new' || b.kind == 'cal'))) {
+      // Five minutes' warning before planner and calendar blocks.
+      r.add((day.add(Duration(hours: b.start)).subtract(const Duration(minutes: 5)), 'In 5 minutes: ${b.title}', '${b.len}h block'));
+    }
+    for (final c in contracts.where((c) => c.status != 'OVERDUE' && DateTime(c.dueDate.year, c.dueDate.month, c.dueDate.day).difference(day).inDays == 1)) {
+      r.add((day.add(const Duration(hours: 9)), 'Due tomorrow: ${c.title}', 'Stake: ${c.stake}'));
+    }
+    _reminders = r;
+    _remindersDay = dayKey(now);
+  }
+
+  void _checkReminders() {
+    final now = DateTime.now();
+    if (_dek != null) {
+      if (_remindersDay != dayKey(now) || now.second == 0) _rebuildReminders();
+      if (calendarUrl.isNotEmpty && now.difference(_lastCalendarSync).inMinutes >= 30) {
+        _lastCalendarSync = now;
+        syncCalendar();
+      }
+    }
+    for (final (at, title, body) in _reminders) {
+      final key = '${at.toIso8601String()}|$title';
+      // Fire within a minute of the due time, once.
+      if (!_fired.contains(key) && !now.isBefore(at) && now.difference(at).inSeconds < 60) {
+        _fired.add(key);
+        _notify(title, body);
+      }
+    }
+  }
+
   void flash(String msg) {
     _toastTimer?.cancel();
     toast = msg;
@@ -222,17 +330,93 @@ class AppState extends ChangeNotifier {
 
   // ---------------------------------------------------------------- derived
   bool get shell => !{Screen.lock, Screen.onboard, Screen.focus}.contains(screen);
-  int get doneTasks => tasks.where((t) => t.done).length;
-  int get doneHabits => checkIns.where((h) => h.doneOn(DateTime.now())).length;
-  int get momentum => (58 + doneTasks * 4 + doneHabits * 3).clamp(0, 99);
-  int get pathPct {
-    final total = tasks.length + checkIns.length;
-    if (total == 0) return 30;
-    return (30 + (doneTasks + doneHabits) / total * 65).round();
+  String get todayKey => dayKey(DateTime.now());
+
+  /// Today's list: tasks planned for today, plus unfinished ones carried over.
+  List<Task> get todayTasks {
+    final k = todayKey;
+    final list = tasks.where((t) => t.date == k || (!t.done && t.date.compareTo(k) < 0)).toList();
+    list.sort((a, b) => a.time.compareTo(b.time));
+    return list;
   }
 
+  int get doneTasks => todayTasks.where((t) => t.done).length;
+  int get habitCount => build.length + reduce.length;
+  int get doneHabits {
+    final now = DateTime.now();
+    return build.where((h) => h.doneOn(now)).length + reduce.where((h) => h.heldOn(now)).length;
+  }
+
+  int votesOn(String k) =>
+      tasks.where((t) => t.done && t.doneAt != null && dayKey(t.doneAt!) == k).length +
+      build.where((h) => h.days.contains(k)).length +
+      reduce.where((h) => h.heldDays.contains(k)).length +
+      (extraVotes[k] ?? 0);
+
+  int get votes => votesOn(todayKey);
+
+  void _vote() => extraVotes[todayKey] = (extraVotes[todayKey] ?? 0) + 1;
+
+  /// Share of a day's planned tasks and habits that got done. Null for days
+  /// before you had anything planned.
+  double? dayScore(DateTime d) {
+    final k = dayKey(d);
+    final planned = tasks.where((t) => t.date == k).toList();
+    final habitsDone = build.where((h) => h.days.contains(k)).length + reduce.where((h) => h.heldDays.contains(k)).length;
+    final denom = planned.length + habitCount;
+    if (denom == 0 || (planned.isEmpty && habitsDone == 0 && k != todayKey)) return null;
+    final done = planned.where((t) => t.done).length + habitsDone;
+    return (done / denom).clamp(0, 1).toDouble();
+  }
+
+  /// Momentum: exponentially weighted daily completion over the last 14
+  /// days, so a miss costs a little and a good day wins most of it back.
+  /// Null until there's any history.
+  int? get momentumOrNull {
+    double? ema;
+    final today = DateTime.now();
+    for (var i = 13; i >= 0; i--) {
+      final sc = dayScore(today.subtract(Duration(days: i)));
+      if (sc == null) continue;
+      ema = ema == null ? sc : ema * .7 + sc * .3;
+    }
+    return ema == null ? null : (ema * 100).round();
+  }
+
+  int get momentum => momentumOrNull ?? 0;
+  bool get hasMomentum => momentumOrNull != null;
+  String get momentumLabel => hasMomentum ? '$momentum' : '-';
+
+  /// Share of today's tasks and habits that are done (Path B).
+  int get pathPct {
+    final total = todayTasks.length + habitCount;
+    if (total == 0) return 0;
+    return ((doneTasks + doneHabits) / total * 100).round();
+  }
+
+  /// Completion rate of a habit over the last [window] days, 0-100.
+  int habitRate(Set<String> days, {int window = 14}) {
+    final now = DateTime.now();
+    var n = 0;
+    for (var i = 0; i < window; i++) {
+      if (days.contains(dayKey(now.subtract(Duration(days: i))))) n++;
+    }
+    return (n / window * 100).round();
+  }
+
+  String get currentWeek => weekKey(DateTime.now());
+  bool get planLocked => lockedWeeks.contains(currentWeek);
+  List<Block> get weekBlocks => blocks.where((b) => b.week == currentWeek).toList();
+
+  DateTime get weekStart {
+    final n = DateTime.now();
+    return DateTime(n.year, n.month, n.day).subtract(Duration(days: n.weekday - 1));
+  }
+
+  List<FocusSession> sessionsSince(DateTime from) => sessions.where((x) => !x.at.isBefore(from)).toList();
+
   Task get nextTask =>
-      tasks.firstWhere((t) => !t.done, orElse: () => Task(id: '_none', title: 'Nothing left, plan tomorrow', goal: '-'));
+      todayTasks.where((t) => !t.done).firstOrNull ?? Task(id: '_none', title: 'Nothing planned yet', goal: '-');
 
   String get focusClock {
     final m = focusSec ~/ 60, s = focusSec % 60;
@@ -309,6 +493,18 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Quick capture from outside the window (tray, `--capture`). If locked,
+  /// it opens right after unlock.
+  bool _pendingCapture = false;
+  void requestCapture() {
+    if (screen == Screen.lock || screen == Screen.onboard) {
+      _pendingCapture = true;
+      notifyListeners();
+      return;
+    }
+    openOverlay(Ov.capture);
+  }
+
   void togglePalette() => overlay == Ov.palette ? closeOverlay() : openOverlay(Ov.palette);
 
   void escape() {
@@ -326,6 +522,12 @@ class AppState extends ChangeNotifier {
   }
 
   void lockNow() {
+    _saveTimer?.cancel();
+    if (_dek != null) {
+      save(); // payload is captured synchronously, then memory is cleared
+      _dek = null;
+      _clearData();
+    }
     tourScreen = null;
     screen = Screen.lock;
     pin = '';
@@ -336,7 +538,7 @@ class AppState extends ChangeNotifier {
 
   // ---------------------------------------------------------------- security
   void press(String d) {
-    if (lockT > 0) return;
+    if (lockT > 0 || unlocking) return;
     if (d == '⌫') {
       if (pin.isNotEmpty) pin = pin.substring(0, pin.length - 1);
       notifyListeners();
@@ -348,29 +550,85 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (Security.verify(pin, pinSalt, pinHash)) {
-      pin = '';
+    final attempt = pin;
+    pin = '';
+    unlock(attempt);
+  }
+
+  /// Tries a PIN: unwraps the data key and decrypts the vault. Upgrades an
+  /// old plaintext save to encryption on the first successful unlock.
+  Future<bool> unlock(String attempt) async {
+    unlocking = true;
+    notifyListeners();
+    var ok = false;
+    try {
+      if (isEncrypted) {
+        final dek = await Vault.unwrap(attempt, _wrapPin!);
+        final data = dek == null || _vaultBlob == null ? null : await Vault.decryptJson(dek, _vaultBlob!);
+        if (data != null) {
+          _dek = dek;
+          _fromJson(data);
+          ok = true;
+        }
+      } else if (pinHash.isNotEmpty && Security.verify(attempt, pinSalt, pinHash)) {
+        if (_legacy != null) {
+          _fromJson(_legacy!);
+          apiKey = _legacyKey;
+        }
+        await _enableEncryption(attempt);
+        // The old phrase was only ever stored as a hash, so it can't wrap a
+        // key. Issue a new one and show it once.
+        final words = Security.newPhrase();
+        _wrapPhrase = await Vault.wrap(Security.normalizePhrase(words.join(' ')), _dek!);
+        newPhraseToShow = words;
+        _legacy = null;
+        pinHash = pinSalt = phraseHash = phraseSalt = '';
+        await save();
+        await _storage.writeKey(''); // the key now lives inside the vault
+        ok = true;
+      }
+    } finally {
+      unlocking = false;
+    }
+    if (ok) {
+      _rebuildReminders();
+      _lastCalendarSync = DateTime.now();
+      syncCalendar();
       fails = 0;
       lockoutLen = 30;
       pinErr = '';
       screen = Screen.today;
       touch();
-      _rollDay();
       _maybeAutoTour();
       notifyListeners();
-      flash('${greeting()}, ${profile.name} · momentum $momentum');
-      return;
-    }
-    fails++;
-    pin = '';
-    if (fails >= 5) {
-      fails = 0;
-      lockT = lockoutLen;
-      lockoutLen *= 2;
-      pinErr = 'Too many attempts · try again in ${lockT}s';
+      flash(profile.name.isEmpty ? greeting() : '${greeting()}, ${profile.name}');
+      if (_pendingCapture) {
+        _pendingCapture = false;
+        openOverlay(Ov.capture);
+      }
     } else {
-      pinErr = 'Wrong PIN · ${5 - fails} attempts left';
+      fails++;
+      if (fails >= 5) {
+        fails = 0;
+        lockT = lockoutLen;
+        lockoutLen *= 2;
+        pinErr = 'Too many attempts · try again in ${lockT}s';
+      } else {
+        pinErr = 'Wrong PIN · ${5 - fails} attempts left';
+      }
+      notifyListeners();
     }
+    return ok;
+  }
+
+  Future<void> _enableEncryption(String newPin) async {
+    _dek = Vault.randomKey();
+    _wrapPin = await Vault.wrap(newPin, _dek!);
+    _pinLen = newPin.length;
+  }
+
+  void dismissNewPhrase() {
+    newPhraseToShow = null;
     notifyListeners();
   }
 
@@ -378,40 +636,72 @@ class AppState extends ChangeNotifier {
 
   int get pinLength => _pinLen;
 
-  void setPin(String newPin) {
-    pinSalt = Security.newSalt();
-    pinHash = Security.hash(newPin, pinSalt);
+  /// Re-wraps the data key with a new PIN (vault contents are unchanged).
+  Future<void> setPin(String newPin) async {
+    if (_dek == null) return;
+    _wrapPin = await Vault.wrap(newPin, _dek!);
     _pinLen = newPin.length;
-    _changed();
+    await save();
   }
 
-  bool checkPin(String p) => Security.verify(p, pinSalt, pinHash);
+  Future<bool> checkPin(String p) async => isEncrypted && await Vault.unwrap(p, _wrapPin!) != null;
 
-  void setPhrase(List<String> words) {
-    phraseSalt = Security.newSalt();
-    phraseHash = Security.hash(Security.normalizePhrase(words.join(' ')), phraseSalt);
-    _changed();
+  Future<void> setPhrase(List<String> words) async {
+    if (_dek == null) return;
+    _wrapPhrase = await Vault.wrap(Security.normalizePhrase(words.join(' ')), _dek!);
+    await save();
   }
 
-  /// Resets the PIN if the phrase matches. Returns success.
-  bool recover(String phrase, String newPin) {
-    if (phraseHash.isEmpty || !Security.verify(Security.normalizePhrase(phrase), phraseSalt, phraseHash)) return false;
-    setPin(newPin);
+  /// Unlocks with the recovery phrase and sets a new PIN. Returns success.
+  Future<bool> recover(String phrase, String newPin) async {
+    if (_wrapPhrase == null || _vaultBlob == null) return false;
+    final dek = await Vault.unwrap(Security.normalizePhrase(phrase), _wrapPhrase!);
+    final data = dek == null ? null : await Vault.decryptJson(dek, _vaultBlob!);
+    if (data == null) return false;
+    _dek = dek;
+    _fromJson(data);
+    await setPin(newPin);
     fails = 0;
     lockT = 0;
     pinErr = '';
-    flash('PIN reset · unlock with your new PIN');
+    screen = Screen.today;
+    touch();
+    notifyListeners();
+    flash('PIN reset. You\'re in.');
     return true;
   }
 
   Future<void> setApiKey(String key) async {
     if (key.trim().isNotEmpty && !looksLikeClaudeKey(key)) return;
     apiKey = key.trim();
-    await _storage.writeKey(apiKey);
-    notifyListeners();
+    _changed(); // saved inside the encrypted vault
   }
 
-  void completeOnboarding({
+  /// Drops decrypted data from memory (on lock).
+  void _clearData() {
+    final name = profile.name;
+    profile = Profile(name: name);
+    apiKey = '';
+    tasks = [];
+    build = [];
+    reduce = [];
+    goals = [];
+    projects = [];
+    blocks = [];
+    unscheduled = [];
+    contracts = [];
+    contractHistory = [];
+    proof = [];
+    msgs = [];
+    sessions = [];
+    gateLog = [];
+    extraVotes = {};
+    adjustments = {};
+    planDraft = null;
+    reviewDraft = null;
+  }
+
+  Future<void> completeOnboarding({
     required String pinValue,
     required List<String> phrase,
     required String name,
@@ -426,9 +716,7 @@ class AppState extends ChangeNotifier {
     required String provider,
     required String key,
     required String partnerEmail,
-  }) {
-    setPin(pinValue);
-    setPhrase(phrase);
+  }) async {
     profile
       ..name = name.trim().isEmpty ? 'friend' : name.trim()
       ..identity = identity.trim()
@@ -447,7 +735,7 @@ class AppState extends ChangeNotifier {
       final existing = {for (final g in goals) g.name: g};
       goals = [
         for (final (n, t) in cleanGoals)
-          existing[n.trim()] ?? Goal(name: n.trim(), why: '', pct: 0, target: t.trim(), est: t.trim(), lastTouched: DateTime.now())
+          existing[n.trim()] ?? Goal(name: n.trim(), target: t.trim(), lastTouched: DateTime.now())
       ];
     }
     final cleanReduce = reduceDrafts.where((r) => r.$1.trim().isNotEmpty).toList();
@@ -455,12 +743,15 @@ class AppState extends ChangeNotifier {
       final existing = {for (final r in reduce) r.name: r};
       reduce = [for (final (n, s) in cleanReduce) existing[n.trim()] ?? ReduceHabit(name: n.trim(), swap: s.trim())];
     }
-    if (key.trim().isNotEmpty) setApiKey(key);
+    if (key.trim().isNotEmpty && looksLikeClaudeKey(key)) apiKey = key.trim();
     screen = Screen.today;
     _maybeAutoTour();
     touch();
-    _changed();
+    notifyListeners();
     flash('Welcome to Trajectory');
+    await _enableEncryption(pinValue);
+    _wrapPhrase = await Vault.wrap(Security.normalizePhrase(phrase.join(' ')), _dek!);
+    await save();
   }
 
   String _nameFromEmail(String e) {
@@ -471,9 +762,27 @@ class AppState extends ChangeNotifier {
   Future<void> resetAll() async {
     await _storage.wipe();
     pinHash = pinSalt = phraseHash = phraseSalt = '';
+    _dek = _wrapPin = _wrapPhrase = _vaultBlob = _legacy = null;
     apiKey = '';
     profile = Profile();
-    _seed();
+    tasks = [];
+    build = [];
+    reduce = [];
+    goals = [];
+    projects = [];
+    blocks = [];
+    unscheduled = [];
+    contracts = [];
+    contractHistory = [];
+    proof = [];
+    msgs = [];
+    sessions = [];
+    gateLog = [];
+    extraVotes = {};
+    adjustments = {};
+    toursSeen = {};
+    recoveryAdded = false;
+    planAcceptedDay = '';
     screen = Screen.onboard;
     notifyListeners();
   }
@@ -486,12 +795,46 @@ class AppState extends ChangeNotifier {
 
   void toggleTask(Task t) {
     t.done = !t.done;
-    votes += t.done ? 1 : -1;
+    t.doneAt = t.done ? DateTime.now() : null;
     if (t.done) {
       _touchGoal(t.goal);
       flash('+1 vote · ${t.goal}');
     }
     _changed();
+  }
+
+  void updateTask(Task t, {String? title, String? time, String? date, String? goal, String? where}) {
+    if (title != null && title.trim().isNotEmpty) t.title = title.trim();
+    if (time != null) t.time = time.trim().isEmpty ? '-' : time.trim();
+    if (date != null) t.date = date;
+    if (goal != null) t.goal = goal;
+    if (where != null) t.where = where.trim().isEmpty ? '-' : where.trim();
+    _changed();
+  }
+
+  void updateBuildHabit(BuildHabit h, {String? name, String? target, String? stack}) {
+    if (name != null && name.trim().isNotEmpty) h.name = name.trim();
+    if (target != null) h.target = target.trim();
+    if (stack != null) h.stack = stack.trim();
+    _changed();
+  }
+
+  /// Puts a project task on today's list (linked to the project's goal).
+  void projTaskToToday(Project p, ProjTask pt) {
+    tasks.add(Task(title: pt.title, goal: p.goal));
+    pt.when = 'Today';
+    p.lastActive = DateTime.now();
+    _changed();
+    flash('Added to today: ${pt.title}');
+  }
+
+  /// Sends a project task to the planner's unscheduled list, sized by its estimate.
+  void projTaskToPlanner(Project p, ProjTask pt) {
+    unscheduled.add(Unscheduled(title: pt.title, len: pt.hours.ceil().clamp(1, 6)));
+    pt.when = 'On the planner';
+    p.lastActive = DateTime.now();
+    _changed();
+    flash('Sent to the planner: ${pt.title}');
   }
 
   void removeTask(Task t) {
@@ -505,19 +848,36 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void toggleCheckIn(CheckIn h) {
-    final k = dayKey(DateTime.now());
+  void toggleHabit(BuildHabit h) {
+    final k = todayKey;
     h.days.contains(k) ? h.days.remove(k) : h.days.add(k);
+    _changed();
+  }
+
+  void toggleHeld(ReduceHabit h) {
+    final k = todayKey;
+    h.heldDays.contains(k) ? h.heldDays.remove(k) : h.heldDays.add(k);
+    _changed();
+  }
+
+  void deleteBuildHabit(BuildHabit h) {
+    build.remove(h);
+    _changed();
+  }
+
+  void deleteReduceHabit(ReduceHabit h) {
+    reduce.remove(h);
     _changed();
   }
 
   void addTask(String text) {
     if (text.trim().isEmpty) return;
     final c = parseCapture(text, goalNames);
-    tasks.add(Task(title: c.title, time: c.time, where: c.tomorrow ? 'tomorrow' : '-', goal: c.goal));
+    final tomorrow = dayKey(DateTime.now().add(const Duration(days: 1)));
+    tasks.add(Task(title: c.title, time: c.time, goal: c.goal, date: c.tomorrow ? tomorrow : null));
     overlay = Ov.none;
     _changed();
-    flash('Captured → ${c.goal}');
+    flash(c.tomorrow ? 'Captured for tomorrow → ${c.goal}' : 'Captured → ${c.goal}');
   }
 
   String get aiProvider => localOnly ? 'Ollama' : profile.aiProvider;
@@ -528,7 +888,7 @@ class AppState extends ChangeNotifier {
   /// Drafts today's schedule for open tasks: AI when available, otherwise a
   /// heuristic that puts goal work in the peak window and the rest after.
   Future<void> generatePlan() async {
-    final open = tasks.where((t) => !t.done).toList();
+    final open = todayTasks.where((t) => !t.done).toList();
     if (open.isEmpty || planLoading) return;
     planLoading = true;
     planError = null;
@@ -545,7 +905,7 @@ class AppState extends ChangeNotifier {
             'Use 24-hour HH:MM times. Summary: one or two plain sentences, no markdown. Never use em-dashes.',
         prompt: 'Now: ${_two(now.hour)}:${_two(now.minute)}. Wake ${p.wake}. Peak energy ${_two(p.peakStart)}:00-${_two(p.peakEnd)}:00. '
             'Work hours ${_two(p.workStart)}:00-${_two(p.workEnd)}:00.\n'
-            'Calendar today: ${blocks.where((b) => b.day == todayIndex && b.kind == 'cal').map((b) => '${b.title} ${_two(b.start)}:00 for ${b.len}h').join('; ').ifEmpty('none')}.\n'
+            'Already on today\'s planner: ${weekBlocks.where((b) => b.day == todayIndex).map((b) => '${b.title} ${_two(b.start)}:00 for ${b.len}h').join('; ').ifEmpty('none')}.\n'
             'Open tasks (id | title | current time | goal):\n'
             '${open.map((t) => '${t.id} | ${t.title} | ${t.time} | ${t.goal}').join('\n')}',
         schema: const {
@@ -622,7 +982,7 @@ class AppState extends ChangeNotifier {
       if (t == null) continue;
       t.time = item.time;
       final h = int.parse(item.time.split(':').first);
-      blocks.removeWhere((b) => b.day == day && b.title == t.title && (b.kind == 'plan' || b.kind == 'new'));
+      blocks.removeWhere((b) => b.week == currentWeek && b.day == day && b.title == t.title && (b.kind == 'plan' || b.kind == 'new'));
       if (h >= plannerStartHour && h < plannerStartHour + plannerHours) {
         blocks.add(Block(day: day, start: h, len: (item.minutes / 60).ceil().clamp(1, 4), title: t.title, kind: 'plan'));
       }
@@ -695,12 +1055,13 @@ class AppState extends ChangeNotifier {
 
   void submitFocus(String note, bool markDone) {
     final n = nextTask;
-    focusMinutesLogged += focusMins;
+    sessions.add(FocusSession(at: DateTime.now(), minutes: focusMins, goal: n.goal, task: n.id == '_none' ? '' : n.title));
     if (markDone && n.id != '_none') {
       n.done = true;
+      n.doneAt = DateTime.now();
       _touchGoal(n.goal);
     }
-    votes++;
+    _vote();
     if (note.trim().isNotEmpty) {
       proof.insert(0, Proof(date: _shortDate(DateTime.now()), title: note.trim(), goal: n.goal));
     }
@@ -713,7 +1074,7 @@ class AppState extends ChangeNotifier {
 
   // ---------------------------------------------------------------- vision / projects
   void addGoal(String name, String why, String target) {
-    goals.add(Goal(name: name, why: why, pct: 0, target: target, est: target, lastTouched: DateTime.now()));
+    goals.add(Goal(name: name, why: why, target: target, lastTouched: DateTime.now()));
     _changed();
     flash('Goal added');
   }
@@ -732,7 +1093,7 @@ class AppState extends ChangeNotifier {
   }
 
   void scheduleTenMinutes(Goal g) {
-    tasks.add(Task(title: '10 min on ${g.name}', time: '-', where: '-', goal: g.name));
+    tasks.add(Task(title: '10 min on ${g.name}', goal: g.name));
     _changed();
     flash('Added 10 minutes for ${g.name} to today');
   }
@@ -758,7 +1119,6 @@ class AppState extends ChangeNotifier {
         name: name.length > 40 ? '${name.substring(0, 40)}…' : name,
         goal: goal,
         status: 'Active',
-        last: 'today',
         notes: description,
         milestones: ms));
     newProjOpen = false;
@@ -773,8 +1133,7 @@ class AppState extends ChangeNotifier {
 
   void toggleProjTask(Project p, ProjTask t) {
     t.done = !t.done;
-    p.pct = p.computedPct;
-    p.last = 'today';
+    p.lastActive = DateTime.now();
     if (t.done) _touchGoal(p.goal);
     _changed();
   }
@@ -782,7 +1141,12 @@ class AppState extends ChangeNotifier {
   void addProjTask(Project p, Milestone m, String title) {
     if (title.trim().isEmpty) return;
     m.tasks.add(ProjTask(title: title.trim(), est: '1h', when: 'unscheduled'));
-    p.pct = p.computedPct;
+    p.lastActive = DateTime.now();
+    _changed();
+  }
+
+  void setReward(Project p, String reward) {
+    p.reward = reward;
     _changed();
   }
 
@@ -871,14 +1235,13 @@ class AppState extends ChangeNotifier {
   }
 
   void logUrge(ReduceHabit h, String trigger) {
-    h.urges++;
     h.log.add(UrgeLog(DateTime.now(), trigger));
     _changed();
     flash('Logged. Swap: ${h.swap}');
   }
 
   void addBuildHabit(String name, String target, String stack) {
-    build.add(BuildHabit(name: name, target: target, stack: stack, momentum: 50, seed: build.length + 7, density: .1));
+    build.add(BuildHabit(name: name, target: target, stack: stack));
     _changed();
   }
 
@@ -887,25 +1250,15 @@ class AppState extends ChangeNotifier {
     _changed();
   }
 
-  /// Urge counts per 2h bucket from 00-24, real log merged with baseline.
+  /// Logged urges per 2-hour bucket (00:00-02:00 ... 22:00-24:00).
   List<int> urgeBuckets() {
-    final base = [2, 1, 1, 2, 3, 2, 2, 3, 4, 6, 10, 7];
-    final b = List<int>.from(base);
+    final b = List<int>.filled(12, 0);
     for (final h in reduce) {
       for (final l in h.log) {
-        final i = ((l.at.hour - 8) ~/ 1.5).clamp(0, 11);
-        b[i]++;
+        b[l.at.hour ~/ 2]++;
       }
     }
     return b;
-  }
-
-  void blockFeedsAfter22() {
-    for (final s in ['x.com', 'youtube.com', 'reddit.com', 'instagram.com']) {
-      if (!blockList.contains(s)) blockList.add(s);
-    }
-    _changed();
-    flash('Feeds blocked after 22:00');
   }
 
   // ---------------------------------------------------------------- planner
@@ -915,22 +1268,24 @@ class AppState extends ChangeNotifier {
   }
 
   void toggleLock() {
-    planLocked = !planLocked;
+    planLocked ? lockedWeeks.remove(currentWeek) : lockedWeeks.add(currentWeek);
     _changed();
-    flash(planLocked ? 'Week locked · mid-week edits need a reason' : 'Week unlocked');
+    flash(planLocked ? 'Week locked. Past days can\'t be changed until you unlock.' : 'Week unlocked');
   }
 
   void reschedule() {
-    final missed = blocks.where((b) => b.kind == 'missed').toList();
+    final missed = weekBlocks.where((b) => b.kind == 'missed').toList();
     if (missed.isEmpty) return flash('Nothing missed');
+    // Next day (from tomorrow, wrapping to Sunday) with a free peak slot.
+    final target = (todayIndex + 1).clamp(0, 6);
     for (final b in missed) {
       b
-        ..day = 6
+        ..day = target
         ..start = profile.peakStart.clamp(plannerStartHour, plannerStartHour + plannerHours - b.len)
         ..kind = 'plan';
     }
     _changed();
-    flash('Moved “${missed.first.title}” → Sun ${profile.peakStart.toString().padLeft(2, '0')}:00 (peak energy)');
+    flash('Moved ${missed.length} missed block(s) to ${dayNames[target]} ${profile.peakStart.toString().padLeft(2, '0')}:00 (peak energy)');
   }
 
   void selectUnscheduled(String id) {
@@ -954,7 +1309,7 @@ class AppState extends ChangeNotifier {
   }
 
   void removeBlock(Block b) {
-    if (planLocked) return flash('Week is locked. Unlock to edit.');
+    if (planLocked && b.day < todayIndex) return flash('Week is locked. Unlock to edit.');
     blocks.remove(b);
     if (b.kind == 'new' || b.kind == 'plan') unscheduled.add(Unscheduled(title: b.title, len: b.len));
     _changed();
@@ -971,6 +1326,50 @@ class AppState extends ChangeNotifier {
     _changed();
   }
 
+  // ---------------------------------------------------------------- calendar
+  /// Read-only events for the current week from the iCal subscription.
+  List<Block> calendarBlocks = [];
+  String? calendarError;
+  DateTime? calendarSyncedAt;
+
+  Future<void> syncCalendar() async {
+    if (calendarUrl.isEmpty) {
+      calendarBlocks = [];
+      calendarError = null;
+      notifyListeners();
+      return;
+    }
+    try {
+      final events = await _calendar.fetchWeek(calendarUrl, weekStart);
+      calendarBlocks = [
+        for (final e in events)
+          if (e.start.hour >= plannerStartHour && e.start.hour < plannerStartHour + plannerHours)
+            Block(day: e.start.weekday - 1, start: e.start.hour, len: e.hours.clamp(1, plannerHours), title: e.title, kind: 'cal'),
+      ];
+      calendarError = null;
+      calendarSyncedAt = DateTime.now();
+    } catch (e) {
+      calendarError = 'Calendar sync failed: $e';
+    }
+    notifyListeners();
+  }
+
+  void setCalendarUrl(String url) {
+    calendarUrl = url.trim().replaceFirst(RegExp(r'^webcal://'), 'https://');
+    _changed();
+    syncCalendar();
+  }
+
+  void setNotifications(bool v) {
+    notificationsOn = v;
+    _changed();
+  }
+
+  void setKeepInTray(bool v) {
+    keepInTray = v;
+    _changed();
+  }
+
   // ---------------------------------------------------------------- mirror
   void setHorizon(String h) {
     horizon = h;
@@ -982,13 +1381,46 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Three small, concrete steps built from your own data.
+  List<(String, String, Task)> get recoverySteps {
+    final now = DateTime.now();
+    final tomorrow = dayKey(now.add(const Duration(days: 1)));
+    final steps = <(String, String, Task)>[];
+    final drifting = [...goals]..sort((a, b) => b.days.compareTo(a.days));
+    if (drifting.isNotEmpty) {
+      final g = drifting.first;
+      steps.add(('Tonight', '10 minutes on ${g.name}. Just start.', Task(title: '10 min on ${g.name}', time: '21:00', goal: g.name)));
+    }
+    final open = tasks.where((t) => !t.done).toList();
+    if (open.isNotEmpty) {
+      final t = open.first;
+      final peak = '${profile.peakStart.toString().padLeft(2, '0')}:00';
+      steps.add(('Tomorrow $peak', '${t.title}, first thing in your peak window.', Task(title: t.title, time: peak, goal: t.goal, date: tomorrow)));
+    }
+    if (reduce.isNotEmpty) {
+      final r = reduce.first;
+      steps.add(('Tomorrow', 'When the urge for ${r.name.toLowerCase()} hits: ${r.swap}.', Task(title: 'Swap ready: ${r.swap}', goal: 'Inbox', date: tomorrow)));
+    }
+    return steps;
+  }
+
   void addRecovery() {
-    if (recoveryAdded) return;
+    final steps = recoverySteps;
+    if (recoveryAdded || steps.isEmpty) return;
     recoveryAdded = true;
-    tasks.add(Task(title: '10 min on billing spec', time: '21:00', where: 'desk', goal: goals.firstOrNull?.name ?? 'Inbox'));
-    unscheduled.add(Unscheduled(title: 'Easy 3k run', len: 1));
+    for (final (_, _, task) in steps) {
+      // Reschedule an existing open task rather than duplicating it.
+      final existing = tasks.where((x) => !x.done && x.title == task.title).firstOrNull;
+      if (existing != null) {
+        existing
+          ..date = task.date
+          ..time = task.time;
+      } else {
+        tasks.add(task);
+      }
+    }
     _changed();
-    flash('3 steps added · first one tonight 21:00');
+    flash('${steps.length} steps added to your tasks');
   }
 
   // ---------------------------------------------------------------- review
@@ -1008,17 +1440,20 @@ class AppState extends ChangeNotifier {
     reviewLoading = true;
     reviewError = null;
     notifyListeners();
-    final done = blocks.where((b) => b.kind == 'done').toList();
-    final missed = blocks.where((b) => b.kind == 'missed').toList();
+    final done = weekBlocks.where((b) => b.kind == 'done').toList();
+    final missed = weekBlocks.where((b) => b.kind == 'missed').toList();
+    final ws = weekStart;
+    final weekTasks = tasks.where((t) => t.date.compareTo(dayKey(ws)) >= 0 && t.date.compareTo(todayKey) <= 0).toList();
     final facts = StringBuffer()
       ..writeln('Planner blocks done: ${done.map((b) => '${b.title} (${dayNames[b.day]} ${b.start}:00, ${b.len}h)').join('; ').ifEmpty('none')}')
       ..writeln('Planner blocks missed: ${missed.map((b) => '${b.title} (${dayNames[b.day]} ${b.start}:00)').join('; ').ifEmpty('none')}')
-      ..writeln('Tasks done: ${tasks.where((t) => t.done).map((t) => t.title).join('; ').ifEmpty('none')}')
-      ..writeln('Tasks still open: ${tasks.where((t) => !t.done).map((t) => '${t.title} (${t.goal})').join('; ').ifEmpty('none')}')
-      ..writeln('Focus minutes logged: ${focusMinutesLogged.round()}')
-      ..writeln('Goals: ${goals.map((g) => '${g.name} ${g.pct}% (untouched ${g.days}d)').join('; ')}')
-      ..writeln('Habit momentum: ${build.map((h) => '${h.name} ${h.momentum}').join(', ')}')
-      ..writeln('Urges logged: ${reduce.map((h) => '${h.name} ${h.urges}').join(', ')}')
+      ..writeln('Tasks done this week: ${weekTasks.where((t) => t.done).map((t) => t.title).join('; ').ifEmpty('none')}')
+      ..writeln('Tasks still open: ${weekTasks.where((t) => !t.done).map((t) => '${t.title} (${t.goal})').join('; ').ifEmpty('none')}')
+      ..writeln('Focus minutes this week: ${sessionsSince(ws).fold<int>(0, (a, x) => a + x.minutes)}')
+      ..writeln('Goals: ${goals.map((g) => '${g.name} ${g.pct}% (untouched ${g.days}d)').join('; ').ifEmpty('none')}')
+      ..writeln('Habits (done in last 7 days): ${build.map((h) => '${h.name} ${habitRate(h.days, window: 7)}%').join(', ').ifEmpty('none')}')
+      ..writeln('Urges logged this week: ${reduce.map((h) => '${h.name} ${h.urgesThisWeek}').join(', ').ifEmpty('none')}')
+      ..writeln('Friction gate this week: opened anyway ${gateLog.where((g) => g.opened && !g.at.isBefore(ws)).length}, walked away ${gateLog.where((g) => !g.opened && !g.at.isBefore(ws)).length}')
       ..writeln('Contracts: ${contracts.map((c) => '${c.title}, ${c.status}').join('; ').ifEmpty('none')}')
       ..writeln('Peak energy window: ${_two(profile.peakStart)}-${_two(profile.peakEnd)}');
     try {
@@ -1073,11 +1508,12 @@ class AppState extends ChangeNotifier {
   }
 
   void lockFromReview() {
-    planLocked = true;
-    screen = Screen.planner;
+    lockedWeeks.add(weekKey(DateTime.now().add(const Duration(days: 7))));
     _changed();
-    flash('Next week locked');
+    flash('Next week is locked in');
   }
+
+  bool get nextWeekLocked => lockedWeeks.contains(weekKey(DateTime.now().add(const Duration(days: 7))));
 
   // ---------------------------------------------------------------- commitments
   void setStake(String s) {
@@ -1085,29 +1521,88 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void signContract(String text, String due) {
-    final t = text.trim().isEmpty ? 'Run 3× next week' : text.trim();
+  void signContract(String text, DateTime due) {
+    if (text.trim().isEmpty) return flash('Write what you will do first');
     contracts.insert(
         0,
         Contract(
-            title: t,
-            stake: stake == 'Charity' ? r'$100 → charity' : stake == 'Partner' ? '${profile.partnerName.isEmpty ? 'Partner' : profile.partnerName} notified' : 'Public post',
-            due: due));
+            title: text.trim(),
+            stake: stake == 'Charity' ? r'$100 to charity' : stake == 'Partner' ? '${profile.partnerName.isEmpty ? 'Partner' : profile.partnerName} is told' : 'Public post',
+            dueDate: due));
     _changed();
-    flash('Contract signed');
+    flash('Contract signed, due ${shortDate(due)}');
   }
 
   void resolveContract(Contract c, bool kept) {
     contracts.remove(c);
     contractHistory.add(kept);
     _changed();
+    if (kept) _vote();
     flash(kept ? 'Kept · +1 vote' : 'Broken · logged honestly');
-    if (kept) votes++;
+    if (!kept && profile.notifyBroken && profile.partnerEmail.isNotEmpty) {
+      platform.draftEmail(
+        to: profile.partnerEmail,
+        subject: 'I broke a commitment',
+        body: 'Hi ${profile.partnerName.isEmpty ? '' : profile.partnerName},\n\nI committed to "${c.title}" by ${shortDate(c.dueDate)} and didn\'t make it. '
+            'The stake was: ${c.stake}.\n\nKeeping myself honest,\n${profile.name}',
+      );
+    }
   }
 
-  void cycleContractStatus(Contract c) {
-    c.status = c.status == 'ON TRACK' ? 'AT RISK' : 'ON TRACK';
+  void toggleContractFlag(Contract c) {
+    c.flagged = !c.flagged;
     _changed();
+  }
+
+  /// Days in a row (ending yesterday) where less than a third of the plan got done.
+  int get missedStreak {
+    var n = 0;
+    final now = DateTime.now();
+    for (var i = 1; i <= 14; i++) {
+      final sc = dayScore(now.subtract(Duration(days: i)));
+      if (sc == null || sc >= 1 / 3) break;
+      n++;
+    }
+    return n;
+  }
+
+  bool missedNoticeDismissed = false;
+
+  void dismissMissedNotice() {
+    missedNoticeDismissed = true;
+    notifyListeners();
+  }
+
+  void emailPartnerMissed() {
+    missedNoticeDismissed = true;
+    notifyListeners();
+    platform.draftEmail(
+      to: profile.partnerEmail,
+      subject: 'A rough stretch',
+      body: 'Hi ${profile.partnerName},\n\nI\'ve had $missedStreak days in a row where I got less than a third of my plan done. '
+          'Telling you so it\'s out in the open. My next step: ${nextTask.id == '_none' ? 'plan tomorrow tonight' : nextTask.title}.\n\n${profile.name}',
+    );
+  }
+
+  void emailPartnerReport() {
+    final ws = weekStart;
+    final weekTasks = tasks.where((t) => t.date.compareTo(dayKey(ws)) >= 0 && t.date.compareTo(todayKey) <= 0).toList();
+    final focus = sessionsSince(ws).fold<int>(0, (a, x) => a + x.minutes);
+    final r = reviewDraft;
+    platform.draftEmail(
+      to: profile.partnerEmail,
+      subject: 'My week, honestly (week of ${shortDate(ws)})',
+      body: [
+        'Hi ${profile.partnerName},',
+        '',
+        if (r != null) r.report else 'This week I finished ${weekTasks.where((t) => t.done).length} of ${weekTasks.length} planned tasks and logged ${(focus / 60).toStringAsFixed(1)}h of focus.',
+        if (r != null && r.wins.isNotEmpty) '\nWins: ${r.wins.join('; ')}',
+        if (r != null && r.slips.isNotEmpty) 'Slips: ${r.slips.map((x) => x.$1).join('; ')}',
+        if (r != null) '\nNext week: ${r.nextWeek}',
+        '',
+        profile.name,
+      ].join('\n'),
+    );
   }
 
   void setPartnerNotify({bool? broken, bool? missed, bool? report}) {
@@ -1140,7 +1635,7 @@ class AppState extends ChangeNotifier {
   }
 
   void clearChat() {
-    msgs = seedMsgs();
+    msgs = [];
     _changed();
   }
 
@@ -1150,13 +1645,13 @@ class AppState extends ChangeNotifier {
       parts.add('Goals: ${goals.map((g) => '${g.name} (${g.pct}%, target ${g.target}, last touched ${g.days}d ago)').join('; ')}.');
     }
     if (coachContext['tasks'] == true) {
-      parts.add('Today\'s tasks: ${tasks.map((t) => '${t.time} ${t.title}${t.done ? ' [done]' : ''}').join('; ')}.');
+      parts.add('Today\'s tasks: ${todayTasks.map((t) => '${t.time} ${t.title}${t.done ? ' [done]' : ''}').join('; ')}.');
     }
     if (coachContext['habits'] == true) {
-      parts.add('Habit momentum: ${build.map((h) => '${h.name} ${h.momentum}').join(', ')}. Overall momentum $momentum.');
+      parts.add('Habits done in the last 14 days: ${build.map((h) => '${h.name} ${habitRate(h.days)}%').join(', ')}.${hasMomentum ? ' Overall momentum $momentum.' : ''}');
     }
     if (coachContext['urges'] == true) {
-      parts.add('Habits being reduced: ${reduce.map((h) => '${h.name} (${h.urges} urges this week)').join(', ')}.');
+      parts.add('Habits being reduced: ${reduce.map((h) => '${h.name} (${h.urgesThisWeek} urges this week)').join(', ')}.');
     }
     parts.add('Peak energy ${profile.peakStart}:00-${profile.peakEnd}:00. Identity: "I am someone who ${profile.identity}".');
     return parts.join(' ');
@@ -1191,14 +1686,17 @@ class AppState extends ChangeNotifier {
     _changed();
   }
 
-  String _offlineReply() => {
-        'Gentle':
-            "That sounds heavy. Let's make it smaller: pick the one task you've been avoiding and give it 10 minutes before lunch tomorrow. That's it.",
-        'Direct':
-            'Your afternoons are where deep work goes to die, the blocks after 14:00 keep slipping. Move the hardest task to ${profile.peakStart.toString().padLeft(2, '0')}:30 tomorrow and protect it. Next action: accept that block now.',
-        'Drill':
-            'Afternoon blocks. Missed. Again. Pattern\'s obvious. Hardest task, ${profile.peakStart.toString().padLeft(2, '0')}:30 tomorrow, phone in the other room. Go accept the block.',
-      }[tone]!;
+  /// Offline coach: no AI, so it only says things your data supports.
+  String _offlineReply() {
+    final n = nextTask;
+    final peak = '${_two(profile.peakStart)}:00';
+    final task = n.id == '_none' ? 'the one thing you\'ve been avoiding' : '"${n.title}"';
+    return switch (tone) {
+      'Gentle' => 'Let\'s keep it small. Give $task ten minutes tomorrow at $peak, in your peak window. That\'s all for now. (Offline coach: add an AI key in Settings for real answers.)',
+      'Drill' => '$task. $peak tomorrow. Phone in another room. Go put it on the planner. (Offline coach: add an AI key in Settings for real answers.)',
+      _ => 'Next action: put $task at $peak tomorrow, your peak window, and protect it. (Offline coach: add an AI key in Settings for real answers.)',
+    };
+  }
 
   // ---------------------------------------------------------------- gate
   void openGate([String site = 'x.com']) {
@@ -1208,7 +1706,8 @@ class AppState extends ChangeNotifier {
 
   void gateB() {
     overlay = Ov.none;
-    votes++;
+    gateLog.add(GateEvent(at: DateTime.now(), site: gateSite, opened: false));
+    _vote();
     _changed();
     flash('Good call · +1 vote');
   }
@@ -1218,8 +1717,10 @@ class AppState extends ChangeNotifier {
   void gateA(String reason) {
     if (!gateCanOpen(reason)) return;
     overlay = Ov.none;
-    notifyListeners();
-    flash('Opened $gateSite · logged to Time Ledger as Path A');
+    gateLog.add(GateEvent(at: DateTime.now(), site: gateSite, opened: true, reason: reason.trim()));
+    _changed();
+    platform.openSite(gateSite);
+    flash('Opening $gateSite · logged as Path A');
   }
 
   // ---------------------------------------------------------------- settings
@@ -1255,11 +1756,6 @@ class AppState extends ChangeNotifier {
     _changed();
   }
 
-  void setNudges(int n) {
-    nudgesPerDay = n;
-    _changed();
-  }
-
   void setDecay(String d) {
     decayMetaphor = d;
     _changed();
@@ -1284,7 +1780,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<String> exportJson() {
-    final data = toJson()..remove('security');
+    final data = toJson()..remove('apiKey');
     return _storage.export('trajectory-export.json', const JsonEncoder.withIndent('  ').convert(data));
   }
 
@@ -1320,20 +1816,17 @@ class AppState extends ChangeNotifier {
 
   // ---------------------------------------------------------------- json
   Map<String, dynamic> toJson() => {
-        'version': 1,
+        'version': 2,
         'theme': theme.name,
         'profile': profile.toJson(),
-        'security': {'pinHash': pinHash, 'pinSalt': pinSalt, 'pinLen': _pinLen, 'phraseHash': phraseHash, 'phraseSalt': phraseSalt},
+        'apiKey': apiKey,
         'settings': {
           'autoLock': autoLockMinutes,
-          'nudges': nudgesPerDay,
-          'quiet': quietHours,
           'decay': decayMetaphor,
           'blockList': blockList,
           'localOnly': localOnly,
         },
         'tasks': tasks.map((e) => e.toJson()).toList(),
-        'checkIns': checkIns.map((e) => e.toJson()).toList(),
         'build': build.map((e) => e.toJson()).toList(),
         'reduce': reduce.map((e) => e.toJson()).toList(),
         'goals': goals.map((e) => e.toJson()).toList(),
@@ -1343,11 +1836,14 @@ class AppState extends ChangeNotifier {
         'contracts': contracts.map((e) => e.toJson()).toList(),
         'contractHistory': contractHistory,
         'proof': proof.map((e) => e.toJson()).toList(),
-        'rewards': rewards.map((e) => e.toJson()).toList(),
         'msgs': msgs.map((e) => e.toJson()).toList(),
-        'votes': votes,
-        'votesDay': votesDay,
-        'planLocked': planLocked,
+        'sessions': sessions.map((e) => e.toJson()).toList(),
+        'gateLog': gateLog.map((e) => e.toJson()).toList(),
+        'extraVotes': extraVotes,
+        'lockedWeeks': lockedWeeks.toList(),
+        'notificationsOn': notificationsOn,
+        'keepInTray': keepInTray,
+        'calendarUrl': calendarUrl,
         'energy': energy,
         'aiPlanPending': aiPlanPending,
         'planAcceptedDay': planAcceptedDay,
@@ -1355,32 +1851,24 @@ class AppState extends ChangeNotifier {
         'adjustments': adjustments,
         'tone': tone,
         'coachContext': coachContext,
-        'focusMinutesLogged': focusMinutesLogged,
         'toursSeen': toursSeen.toList(),
         'glassOn': glassOn,
         'sidebarCollapsed': sidebarCollapsed,
       };
 
-  void _fromJson(Map<String, dynamic> j) {
+  void _fromJson(Map<String, dynamic> raw) {
+    final j = (raw['version'] as int? ?? 1) < 2 ? _stripDemoData(raw) : raw;
     List<T> list<T>(String k, T Function(Map<String, dynamic>) f) =>
         (j[k] as List? ?? []).map((e) => f(e as Map<String, dynamic>)).toList();
     theme = ThemeName.values.firstWhere((t) => t.name == j['theme'], orElse: () => ThemeName.calm);
     profile = Profile.fromJson(j['profile'] ?? {});
-    final sec = j['security'] as Map<String, dynamic>? ?? {};
-    pinHash = sec['pinHash'] ?? '';
-    pinSalt = sec['pinSalt'] ?? '';
-    _pinLen = sec['pinLen'] ?? 4;
-    phraseHash = sec['phraseHash'] ?? '';
-    phraseSalt = sec['phraseSalt'] ?? '';
+    if (j['apiKey'] is String) apiKey = j['apiKey'];
     final st = j['settings'] as Map<String, dynamic>? ?? {};
     autoLockMinutes = st['autoLock'] ?? 10;
-    nudgesPerDay = st['nudges'] ?? 3;
-    quietHours = st['quiet'] ?? quietHours;
     decayMetaphor = st['decay'] ?? 'Plant';
     blockList = List<String>.from(st['blockList'] ?? blockList);
     localOnly = st['localOnly'] ?? false;
     tasks = list('tasks', Task.fromJson);
-    checkIns = list('checkIns', CheckIn.fromJson);
     build = list('build', BuildHabit.fromJson);
     reduce = list('reduce', ReduceHabit.fromJson);
     goals = list('goals', Goal.fromJson);
@@ -1390,11 +1878,15 @@ class AppState extends ChangeNotifier {
     contracts = list('contracts', Contract.fromJson);
     contractHistory = List<bool>.from(j['contractHistory'] ?? []);
     proof = list('proof', Proof.fromJson);
-    rewards = list('rewards', Reward.fromJson);
     msgs = list('msgs', ChatMsg.fromJson);
-    votes = j['votes'] ?? 0;
-    votesDay = j['votesDay'] ?? '';
-    planLocked = j['planLocked'] ?? false;
+    sessions = list('sessions', FocusSession.fromJson);
+    gateLog = list('gateLog', GateEvent.fromJson);
+    extraVotes = Map<String, int>.from(j['extraVotes'] ?? {});
+    lockedWeeks = {...(j['lockedWeeks'] as List? ?? []).cast<String>()};
+    if (j['planLocked'] == true) lockedWeeks.add(currentWeek);
+    notificationsOn = j['notificationsOn'] ?? true;
+    keepInTray = j['keepInTray'] ?? true;
+    calendarUrl = j['calendarUrl'] ?? '';
     energy = j['energy'] ?? true;
     aiPlanPending = j['aiPlanPending'] ?? true;
     planAcceptedDay = j['planAcceptedDay'] ?? '';
@@ -1402,10 +1894,55 @@ class AppState extends ChangeNotifier {
     adjustments = Map<String, String>.from(j['adjustments'] ?? {});
     tone = j['tone'] ?? 'Direct';
     coachContext = Map<String, bool>.from(j['coachContext'] ?? coachContext);
-    focusMinutesLogged = (j['focusMinutesLogged'] as num? ?? 0).toDouble();
     toursSeen = {...(j['toursSeen'] as List? ?? []).cast<String>()};
     glassOn = j['glassOn'] ?? true;
     sidebarCollapsed = j['sidebarCollapsed'] ?? false;
+  }
+
+  /// One-time migration from v1 saves, which were pre-filled with demo
+  /// content. Removes only items that exactly match the old seed data (by id
+  /// or title) and keeps everything the user created.
+  static Map<String, dynamic> _stripDemoData(Map<String, dynamic> raw) {
+    final j = Map<String, dynamic>.from(raw);
+    List<Map<String, dynamic>> l(String k) => (j[k] as List? ?? []).cast<Map<String, dynamic>>();
+    const seedTasks = {
+      'Morning pages', 'Write auth middleware tests', 'Billing spec, first draft', 'Billing spec \u2014 first draft',
+      'Gym: legs', 'Gym \u2014 legs', 'Spanish \u00b7 20 min Anki', '10 min on billing spec',
+    };
+    const seedGoalIds = {'ship', 'run', 'es', 'read'};
+    const seedProjectIds = {'pod', 'surge', 'land', '5k', 'blog', 'cli', 'b1'};
+    const seedBuild = {'Gym', 'Read 20 min', 'Spanish'};
+    const seedBlocks = {'Surge \u00b7 auth', 'Gym', 'Surge \u00b7 billing', 'Surge \u00b7 tests', 'Lunch w/ Ana', 'Deep work', 'Long run'};
+    const seedUnscheduled = {'Billing spec', 'Spanish lesson', 'Call mom', 'Easy 3k run'};
+    const seedContracts = {'Ship Surge billing by Oct 31', 'Gym 3\u00d7 every week in October'};
+    const seedProof = {
+      'JWT refresh flow merged', 'First 10k under an hour', 'Finished \u201cFour Thousand Weeks\u201d', 'Passed Spanish A2',
+      'Shipped tidy CLI (214 users)', 'Shipped tidy CLI \u2014 214 users',
+    };
+    j['tasks'] = l('tasks').where((t) => !seedTasks.contains(t['t'])).toList();
+    j['goals'] = l('goals').where((g) => !seedGoalIds.contains(g['id'])).toList();
+    j['projects'] = l('projects').where((p) => !seedProjectIds.contains(p['id'])).toList();
+    j['build'] = l('build').where((h) => !(seedBuild.contains(h['name']) && const {1, 2, 3}.contains(h['seed']))).toList();
+    j['reduce'] = l('reduce').where((h) => !const {'scroll', 'snooze'}.contains(h['id'])).toList();
+    j['blocks'] = l('blocks').where((b) => !seedBlocks.contains(b['t']) && b['k'] != 'cal').toList();
+    j['unscheduled'] = l('unscheduled').where((u) => !seedUnscheduled.contains(u['t'])).toList();
+    j['contracts'] = l('contracts').where((c) => !seedContracts.contains(c['t'])).toList();
+    j['proof'] = l('proof').where((p) => !seedProof.contains(p['t'])).toList();
+    j['msgs'] = l('msgs').where((m) => !(m['text'] as String).startsWith('Morning. You have one hard thing today')).toList();
+    // v1 always started with the same fake 13-entry history.
+    if ((j['contractHistory'] as List? ?? []).length >= 13) j['contractHistory'] = <bool>[];
+    // Focus minutes were real; keep them as one session.
+    final mins = (j['focusMinutesLogged'] as num? ?? 0).round();
+    if (mins > 0) {
+      j['sessions'] = [FocusSession(at: DateTime.now(), minutes: mins, goal: 'Inbox', task: 'Earlier sessions').toJson()];
+    }
+    final prof = Map<String, dynamic>.from(j['profile'] as Map? ?? {});
+    if (prof['partnerEmail'] == 'maya@hey.com') {
+      prof['partnerEmail'] = '';
+      prof['partnerName'] = '';
+    }
+    j['profile'] = prof;
+    return j;
   }
 }
 

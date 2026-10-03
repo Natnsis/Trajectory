@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -19,6 +21,7 @@ import 'screens/review.dart';
 import 'screens/settings.dart';
 import 'screens/today.dart';
 import 'screens/vision.dart';
+import 'shell/desktop.dart';
 import 'shell/overlays.dart';
 import 'shell/sidebar.dart';
 import 'shell/tour.dart';
@@ -28,8 +31,11 @@ import 'state/storage.dart';
 import 'theme/tokens.dart';
 import 'widgets/common.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Single instance: `trajectory --capture` (or a second launch) hands off to
+  // the running app and exits.
+  if (await Desktop.forwardToRunning(args)) exit(0);
   // Fonts are bundled in assets/google_fonts; never hit the network for them.
   GoogleFonts.config.allowRuntimeFetching = false;
   await windowManager.ensureInitialized();
@@ -48,7 +54,10 @@ Future<void> main() async {
   );
   final state = AppState(await Storage.open());
   await state.load();
+  final desktop = Desktop(state);
+  state.onQuit = desktop.quit;
   runApp(TrajectoryApp(state: state));
+  await desktop.init(startWithCapture: args.contains('--capture'));
 }
 
 class TrajectoryApp extends StatelessWidget {
@@ -228,6 +237,7 @@ class _RootViewState extends State<RootView> {
                   if (s.overlay == Ov.palette) const CommandPalette(),
                   if (s.overlay == Ov.capture) const QuickCapture(),
                   if (s.overlay == Ov.gate) const FrictionGate(),
+                  if (s.newPhraseToShow != null) const _NewPhraseCard(),
                   const TourOverlay(),
                   const Toast(),
                 ],
@@ -239,3 +249,50 @@ class _RootViewState extends State<RootView> {
     );
   }
 }
+
+/// Shown once after an old plaintext save is upgraded to encryption.
+class _NewPhraseCard extends StatelessWidget {
+  const _NewPhraseCard();
+  @override
+  Widget build(BuildContext context) {
+    final s = context.app;
+    final t = context.t;
+    final words = s.newPhraseToShow!;
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: .45),
+        child: Center(
+          child: SizedBox(
+            width: 520,
+            child: Glass(
+              elevated: true,
+              strong: true,
+              padding: const EdgeInsets.all(24),
+              child: Material(
+                type: MaterialType.transparency,
+                child: VStack(gap: 14, children: [
+                  const Heading('Your data is now encrypted', size: 22),
+                  const Muted('Everything is encrypted with a key unlocked by your PIN. This is your new recovery phrase: the only way back in if you forget the PIN. Write it down now; it won\'t be shown again.', size: 13.5),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(color: insetFill(context), borderRadius: BorderRadius.circular(t.rs), border: Border.all(color: t.line)),
+                    child: SelectableText(words.join(' '), style: t.mono(size: 15, height: 1.6)),
+                  ),
+                  Row(children: [
+                    Btn('Copy', size: 13, onTap: () {
+                      Clipboard.setData(ClipboardData(text: words.join(' ')));
+                      s.flash('Copied. Store it offline, then clear your clipboard.');
+                    }),
+                    const Spacer(),
+                    Btn('I\'ve saved it', kind: BtnKind.primary, size: 13, onTap: s.dismissNewPhrase),
+                  ]),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+

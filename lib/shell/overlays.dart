@@ -71,6 +71,7 @@ class _CommandPaletteState extends State<CommandPalette> {
         s.closeOverlay();
       }),
       _Cmd('Lock Trajectory', 'security', s.lockNow),
+      if (s.onQuit != null) _Cmd('Quit Trajectory', 'app', () => s.onQuit!()),
     ];
     final q = _q.text.toLowerCase();
     return all.where((c) => c.label.toLowerCase().contains(q)).toList();
@@ -180,7 +181,7 @@ class _QuickCaptureState extends State<QuickCapture> {
           type: MaterialType.transparency,
           child: VStack(gap: 10, children: [
             Text('Quick capture', style: t.body(size: 12.5, color: t.mute)),
-            BareField(controller: _q, autofocus: true, size: 20, hint: 'fix JWT bug tomorrow 6pm', onChanged: (_) => setState(() {}), onSubmitted: s.addTask),
+            BareField(controller: _q, autofocus: true, size: 20, hint: 'call the dentist tomorrow 3pm', onChanged: (_) => setState(() {}), onSubmitted: s.addTask),
             Wrap(spacing: 6, runSpacing: 6, children: [
               for (final c in captureChips(_q.text, s.goalNames)) Chip2(c, bg: t.bSoft, fg: t.b),
             ]),

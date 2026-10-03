@@ -7,18 +7,35 @@ import '../widgets/common.dart';
 class ProofScreen extends StatelessWidget {
   const ProofScreen({super.key});
 
-  static const badges = [('1st', 'First ship', true), ('10k', 'Sub-hour 10k', true), ('A2', 'Spanish A2', true), ('12', '12 books', true), ('β', 'Surge beta', false), ('21k', 'Half marathon', false)];
 
   @override
   Widget build(BuildContext context) {
     final s = context.app;
     final t = context.t;
+    final doneCount = s.tasks.where((x) => x.done).length;
+    final focusMin = s.sessions.fold<int>(0, (a, x) => a + x.minutes);
+    final shipped = s.projects.where((p) => p.status == 'Shipped').length;
+    final bestHabit = s.build.isEmpty ? 0 : s.build.map((h) => h.days.length).reduce((a, b) => a > b ? a : b);
+    final kept = s.contractHistory.where((k) => k).length;
+    // Earned from real activity; locked badges show what's next.
+    final badges = [
+      ('1', 'First task done', doneCount >= 1),
+      ('25', '25 tasks done', doneCount >= 25),
+      ('1h', 'First focus hour', focusMin >= 60),
+      ('10h', '10 focus hours', focusMin >= 600),
+      ('7d', '7 habit check-ins', bestHabit >= 7),
+      ('30d', '30 habit check-ins', bestHabit >= 30),
+      ('S', 'First project shipped', shipped >= 1),
+      ('K', 'First promise kept', kept >= 1),
+      ('V', 'First week reviewed', s.reviewDraft != null),
+    ];
+    final rewards = s.projects.where((p) => p.reward.isNotEmpty).toList();
     return ScreenPage(children: [
       PageHeader(eyebrow: 'Rewards & Proof Wall', title: 'Things you actually did', actions: [
         Btn('+ Proof', size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), onTap: () => _add(context)),
         TourTarget(id: 'proof.badday', child: Btn('Bad-day mode: ${s.badDay ? 'on' : 'off'}', size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), onTap: s.toggleBadDay)),
       ]),
-      if (s.badDay)
+      if (s.badDay && s.proof.isNotEmpty)
         FadeIn(
           child: Callout(
             child: VStack(gap: 4, children: [
@@ -32,6 +49,8 @@ class ProofScreen extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(22, 20, 22, 20),
           child: VStack(children: [
             const Padding(padding: EdgeInsets.only(bottom: 10), child: Strong('Proof timeline')),
+            if (s.proof.isEmpty)
+              const Muted('Nothing here yet. Log a win with "+ Proof", or write what you finished after a focus session and it lands here.', size: 13),
             for (final p in s.proof)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
@@ -50,21 +69,29 @@ class ProofScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
             child: VStack(gap: 12, children: [
               const Strong('Rewards'),
-              for (final r in s.rewards)
-                VStack(gap: 4, children: [
-                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                    Text(r.name, style: t.body(size: 13)),
-                    Text('${r.pct}%', style: t.mono(size: 13, color: t.mute)),
+              if (rewards.isEmpty)
+                const Muted('Set a reward on any project (open it from Projects) and track it here.', size: 12.5),
+              for (final p in rewards)
+                Tap(
+                  onTap: () => s.openProject(p),
+                  child: VStack(gap: 4, children: [
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                      Flexible(child: Text(p.reward, overflow: TextOverflow.ellipsis, style: t.body(size: 13))),
+                      Text('${p.computedPct}%', style: t.mono(size: 13, color: t.mute)),
+                    ]),
+                    Bar(pct: p.computedPct.toDouble(), height: 5),
+                    Muted('When ${p.name} ships', size: 11.5),
                   ]),
-                  Bar(pct: r.pct.toDouble(), height: 5),
-                  Muted(r.unlock, size: 11.5),
-                ]),
+                ),
             ]),
           )),
           Panel(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
             child: VStack(gap: 10, children: [
-              const Strong('Milestone badges'),
+              Row(children: [
+                const Expanded(child: Strong('Badges')),
+                Text('${badges.where((b) => b.$3).length}/${badges.length} earned', style: t.mono(size: 12, color: t.mute)),
+              ]),
               Grid(columns: 3, gap: 10, children: [
                 for (final (k, label, on) in badges)
                   Opacity(

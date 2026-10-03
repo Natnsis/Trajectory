@@ -4,6 +4,7 @@ import '../services/coach.dart';
 import '../theme/tokens.dart';
 import '../shell/tour.dart';
 import '../widgets/common.dart';
+import '../state/app_state.dart';
 
 class CoachScreen extends StatefulWidget {
   const CoachScreen({super.key});
@@ -49,6 +50,15 @@ class _CoachScreenState extends State<CoachScreen> {
           ),
           Expanded(
             child: ListView(controller: _scroll, padding: const EdgeInsets.fromLTRB(36, 24, 36, 24), children: [
+              if (s.msgs.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Muted(
+                      s.aiReady
+                          ? 'Ask about your plan, a goal that\'s stuck, or a slump. The coach sees only the context you tick on the right.'
+                          : 'Add a Claude API key in Settings (or run Ollama locally) for real coaching. Without one, you get short offline suggestions based on your next task.',
+                      size: 13.5),
+                ),
               for (final m in s.msgs)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 14),
@@ -122,12 +132,29 @@ class _CoachScreenState extends State<CoachScreen> {
             padding: const EdgeInsets.only(top: 14),
             child: VStack(gap: 6, children: [
               const Strong('Patterns'),
-              Text('You finish 80% of tasks before noon.', style: t.body(size: 13)),
-              Text('Rescheduled tasks have a 70% chance of slipping again.', style: t.body(size: 13)),
+              for (final line in _patterns(s)) Text(line, style: t.body(size: 13)),
             ]),
           ),
         ]),
       ),
     ]);
   }
+}
+
+/// Patterns computed from your own history; nothing shown until there's data.
+List<String> _patterns(AppState s) {
+  final out = <String>[];
+  final done = s.tasks.where((x) => x.doneAt != null).toList();
+  if (done.length >= 5) {
+    final early = done.where((x) => x.doneAt!.hour < 12).length;
+    out.add('You finish ${(early / done.length * 100).round()}% of your tasks before noon.');
+  }
+  final carried = s.todayTasks.where((x) => x.date.compareTo(s.todayKey) < 0).length;
+  if (carried > 0) out.add('$carried task(s) carried over from earlier days.');
+  if (s.sessions.isNotEmpty) {
+    final mins = s.sessions.fold<int>(0, (a, x) => a + x.minutes);
+    out.add('${s.sessions.length} focus sessions, ${(mins / 60).toStringAsFixed(1)}h total.');
+  }
+  if (out.isEmpty) out.add('Patterns appear here as you use the app.');
+  return out;
 }

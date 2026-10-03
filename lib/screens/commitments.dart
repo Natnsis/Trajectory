@@ -4,6 +4,7 @@ import '../shell/tour.dart';
 import '../widgets/common.dart';
 import '../theme/tokens.dart';
 import '../theme/icons.dart';
+import '../state/app_state.dart';
 
 class CommitmentsScreen extends StatefulWidget {
   const CommitmentsScreen({super.key});
@@ -13,12 +14,24 @@ class CommitmentsScreen extends StatefulWidget {
 
 class _CommitmentsScreenState extends State<CommitmentsScreen> {
   final _c = TextEditingController();
-  final _due = TextEditingController(text: _defaultDue());
+  DateTime _due = DateTime.now().add(const Duration(days: 7));
 
-  static String _defaultDue() {
-    const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    final d = DateTime.now().add(const Duration(days: 7));
-    return '${m[d.month - 1]} ${d.day}';
+  Future<void> _pickDue() async {
+    final t = context.t;
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _due,
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 730)),
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: ColorScheme.fromSeed(seedColor: t.b, brightness: t.dark ? Brightness.dark : Brightness.light, primary: t.b, surface: t.panel2),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null) setState(() => _due = picked);
   }
 
   @override
@@ -47,12 +60,20 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
                   child: Row(children: [
                     Expanded(child: VStack(children: [Text(c.title), Muted('Stake: ${c.stake}', size: 12)])),
                     const SizedBox(width: 14),
-                    Text('due ${c.due}', style: t.mono(size: 12, color: t.mute)),
+                    Text('due ${shortDate(c.dueDate)}', style: t.mono(size: 12, color: t.mute)),
                     const SizedBox(width: 14),
-                    Tap(
-                      onTap: () => s.cycleContractStatus(c),
-                      child: Chip2(c.status, bg: c.status == 'AT RISK' ? t.aSoft : t.bSoft, fg: c.status == 'AT RISK' ? t.a : t.b),
-                    ),
+                    if (c.status == 'OVERDUE') ...[
+                      Btn('Kept it', kind: BtnKind.primary, size: 12, pad: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), onTap: () => s.resolveContract(c, true)),
+                      const SizedBox(width: 6),
+                      Btn('Broke it', kind: BtnKind.softA, size: 12, pad: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), onTap: () => s.resolveContract(c, false)),
+                    ] else
+                      Tooltip(
+                        message: c.flagged ? 'Unflag' : 'Flag as at risk',
+                        child: Tap(
+                          onTap: () => s.toggleContractFlag(c),
+                          child: Chip2(c.status, bg: c.status == 'AT RISK' ? t.aSoft : t.bSoft, fg: c.status == 'AT RISK' ? t.a : t.b),
+                        ),
+                      ),
                     const SizedBox(width: 8),
                     PopupMenuButton<bool>(
                       tooltip: 'Resolve',
@@ -76,6 +97,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
                 const Strong('History'),
                 Text('$kept kept · ${s.contractHistory.length - kept} broken', style: t.mono(size: 12, color: t.mute)),
               ]),
+              if (s.contractHistory.isEmpty) const Muted('Resolve a contract (kept or broken) and your record builds here.', size: 12.5),
               Row(children: [
                 for (var i = 0; i < s.contractHistory.length; i++) ...[
                   if (i > 0) const SizedBox(width: 4),
@@ -96,12 +118,12 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
               Row(children: [
                 Text('Due', style: t.body(size: 12, color: t.mute)),
                 const SizedBox(width: 10),
-                Expanded(child: Field(controller: _due, mono: true, size: 13, fill: t.bg, pad: const EdgeInsets.symmetric(horizontal: 10, vertical: 7))),
+                Expanded(child: Btn(shortDate(_due), size: 13, onTap: _pickDue)),
               ]),
               Pills(square: true, expand: true, options: const [('Charity', 'Charity'), ('Public post', 'Public post'), ('Partner', 'Partner')], value: s.stake, onChanged: s.setStake),
               Muted(hint, size: 12),
               Btn('Sign contract', kind: BtnKind.primary, expand: true, onTap: () {
-                s.signContract(_c.text, _due.text.trim().isEmpty ? _defaultDue() : _due.text.trim());
+                s.signContract(_c.text, _due);
                 _c.clear();
               }),
             ]),
@@ -127,6 +149,11 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
               CheckRow(value: s.profile.notifyBroken, label: 'Broken contracts', onChanged: (v) => s.setPartnerNotify(broken: v)),
               CheckRow(value: s.profile.notifyMissed, label: '3+ missed days in a row', onChanged: (v) => s.setPartnerNotify(missed: v)),
               CheckRow(value: s.profile.notifyReport, label: 'Weekly Honest Report', onChanged: (v) => s.setPartnerNotify(report: v)),
+              if (s.profile.partnerEmail.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                const Muted('Messages open as drafts in your mail app. Nothing is sent until you press Send.', size: 11.5),
+                if (s.profile.notifyReport) Row(children: [Btn('Email this week\'s report', size: 12.5, pad: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), onTap: s.emailPartnerReport)]),
+              ],
             ]),
           )),
         ]),
