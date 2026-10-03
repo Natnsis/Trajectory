@@ -1,30 +1,60 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:trajectory/main.dart';
+import 'package:trajectory/services/capture_parser.dart';
+import 'package:trajectory/services/security.dart';
+import 'package:trajectory/state/app_state.dart';
+import 'package:trajectory/state/storage.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('capture parser', () {
+    test('extracts time, day and goal', () {
+      final c = parseCapture('fix JWT bug tomorrow 6pm', [
+        'Ship Surge v1',
+        'Run a half marathon',
+      ]);
+      expect(c.title, 'fix JWT bug');
+      expect(c.time, '18:00');
+      expect(c.tomorrow, isTrue);
+      expect(c.goal, 'Ship Surge v1');
+    });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    test('12am maps to 00', () {
+      expect(parseCapture('call 12am', []).time, '00:00');
+    });
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  test('pin hashing verifies only the right pin', () {
+    final salt = Security.newSalt();
+    final h = Security.hash('1234', salt);
+    expect(Security.verify('1234', salt, h), isTrue);
+    expect(Security.verify('4321', salt, h), isFalse);
+  });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  test('state round-trips through storage and unlocks with pin', () async {
+    final dir = await Directory.systemTemp.createTemp('traj');
+    final s = AppState(Storage.at(dir));
+    await s.load();
+    expect(s.screen, Screen.onboard);
+    s.setPin('2468');
+    s.addTask('write tests 9am');
+    await s.save();
+    s.dispose();
+
+    final s2 = AppState(Storage.at(dir));
+    await s2.load();
+    expect(s2.screen, Screen.lock);
+    expect(s2.tasks.last.title, 'write tests');
+    for (final d in '1111'.split('')) {
+      s2.press(d);
+    }
+    expect(s2.screen, Screen.lock);
+    expect(s2.pinErr, contains('Wrong PIN'));
+    for (final d in '2468'.split('')) {
+      s2.press(d);
+    }
+    expect(s2.screen, Screen.today);
+    s2.dispose();
+    await dir.delete(recursive: true);
   });
 }

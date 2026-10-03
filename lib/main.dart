@@ -1,121 +1,245 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:window_manager/window_manager.dart';
 
-void main() {
-  runApp(const MyApp());
+import 'screens/coach.dart';
+import 'screens/commitments.dart';
+import 'screens/focus.dart';
+import 'screens/habits.dart';
+import 'screens/ledger.dart';
+import 'screens/lock.dart';
+import 'screens/mirror.dart';
+import 'screens/onboarding.dart';
+import 'screens/planner.dart';
+import 'screens/project_detail.dart';
+import 'screens/projects.dart';
+import 'screens/proof.dart';
+import 'screens/review.dart';
+import 'screens/settings.dart';
+import 'screens/today.dart';
+import 'screens/vision.dart';
+import 'shell/overlays.dart';
+import 'shell/sidebar.dart';
+import 'shell/tour.dart';
+import 'shell/window_controls.dart';
+import 'state/app_state.dart';
+import 'state/storage.dart';
+import 'theme/tokens.dart';
+import 'widgets/common.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Fonts are bundled in assets/google_fonts; never hit the network for them.
+  GoogleFonts.config.allowRuntimeFetching = false;
+  await windowManager.ensureInitialized();
+  await windowManager.waitUntilReadyToShow(
+    const WindowOptions(
+      title: 'Trajectory',
+      size: Size(1360, 860),
+      minimumSize: Size(1100, 700),
+      titleBarStyle: TitleBarStyle.hidden,
+      center: true,
+    ),
+    () async {
+      await windowManager.show();
+      await windowManager.focus();
+    },
+  );
+  final state = AppState(await Storage.open());
+  await state.load();
+  runApp(TrajectoryApp(state: state));
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class TrajectoryApp extends StatelessWidget {
+  const TrajectoryApp({super.key, required this.state});
+  final AppState state;
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+    return ListenableBuilder(
+      listenable: state,
+      builder: (context, _) {
+        final t = Tokens.of(state.theme);
+        return MaterialApp(
+          title: 'Trajectory',
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            brightness: t.dark ? Brightness.dark : Brightness.light,
+            scaffoldBackgroundColor: t.bg,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: t.b,
+              brightness: t.dark ? Brightness.dark : Brightness.light,
+              primary: t.b,
+              surface: t.panel,
+            ),
+            textSelectionTheme: TextSelectionThemeData(
+              selectionColor: t.bSoft,
+              cursorColor: t.b,
+            ),
+            scrollbarTheme: ScrollbarThemeData(
+              thumbColor: WidgetStatePropertyAll(t.line),
+            ),
+            splashFactory: NoSplash.splashFactory,
+          ),
+          builder: (context, child) => AppScope(
+            state: state,
+            child: TokensScope(tokens: t, child: child!),
+          ),
+          home: const RootView(),
+        );
+      },
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
+class RootView extends StatefulWidget {
+  const RootView({super.key});
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<RootView> createState() => _RootViewState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _RootViewState extends State<RootView> {
+  late final AppState _s = context.appRead;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    super.dispose();
+  }
+
+  bool _onKey(KeyEvent e) {
+    // Synthesized events replay keys already held when the window gained focus.
+    if (e is! KeyDownEvent || e.synthesized) return false;
+    _s.touch();
+    final kb = HardwareKeyboard.instance;
+    final mod = kb.isControlPressed || kb.isMetaPressed;
+    if (_s.tourScreen != null) {
+      final k = e.logicalKey;
+      if (k == LogicalKeyboardKey.arrowRight || k == LogicalKeyboardKey.enter) {
+        _s.nextTour();
+        return true;
+      }
+      if (k == LogicalKeyboardKey.arrowLeft) {
+        _s.prevTour();
+        return true;
+      }
+      if (k == LogicalKeyboardKey.escape) {
+        _s.endTour();
+        return true;
+      }
+      return false;
+    }
+    if (mod && kb.isShiftPressed && e.logicalKey == LogicalKeyboardKey.space) {
+      _s.openOverlay(Ov.capture);
+      return true;
+    }
+    if (mod && e.logicalKey == LogicalKeyboardKey.keyK) {
+      _s.togglePalette();
+      return true;
+    }
+    if (e.logicalKey == LogicalKeyboardKey.escape) {
+      if (_s.overlay != Ov.none || _s.tray) {
+        _s.escape();
+        return true;
+      }
+      return false;
+    }
+    if (_s.screen == Screen.lock && ModalRoute.of(context)?.isCurrent == true) {
+      final ch = e.character;
+      if (ch != null && RegExp(r'^[0-9]$').hasMatch(ch)) {
+        _s.press(ch);
+        return true;
+      }
+      if (e.logicalKey == LogicalKeyboardKey.backspace) {
+        _s.press('⌫');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Widget _screen(Screen s) => switch (s) {
+    Screen.lock => const LockScreen(),
+    Screen.onboard => const OnboardingScreen(),
+    Screen.today => const TodayScreen(),
+    Screen.vision => const VisionScreen(),
+    Screen.projects => const ProjectsScreen(),
+    Screen.project => const ProjectDetailScreen(),
+    Screen.habits => const HabitsScreen(),
+    Screen.planner => const PlannerScreen(),
+    Screen.focus => const FocusScreen(),
+    Screen.mirror => const MirrorScreen(),
+    Screen.ledger => const LedgerScreen(),
+    Screen.review => const ReviewScreen(),
+    Screen.commit => const CommitmentsScreen(),
+    Screen.proof => const ProofScreen(),
+    Screen.coach => const CoachScreen(),
+    Screen.settings => const SettingsScreen(),
+  };
+
+  @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    final s = context.app;
+    final t = context.t;
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+      backgroundColor: t.bg,
+      body: WindowChrome(
+        child: Listener(
+          onPointerDown: (_) => s.touch(),
+          onPointerHover: (_) => s.touch(),
+          child: DefaultTextStyle(
+            style: t.body(),
+            child: Stack(
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (s.shell) const Sidebar(),
+                    Expanded(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        switchInCurve: Curves.easeOut,
+                        transitionBuilder: (c, a) =>
+                            FadeTransition(opacity: a, child: c),
+                        // Expand so screens fill the pane instead of being centered.
+                        layoutBuilder: (cur, prev) => Stack(
+                          fit: StackFit.expand,
+                          children: [...prev, ?cur],
+                        ),
+                        child: KeyedSubtree(
+                          key: ValueKey(s.screen),
+                          child: _screen(s.screen),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (s.tray)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTap: s.toggleTray,
+                      behavior: HitTestBehavior.translucent,
+                      child: const SizedBox(),
+                    ),
+                  ),
+                if (s.tray)
+                  const Positioned(left: 12, bottom: 118, child: TrayWidget()),
+                if (s.overlay == Ov.palette) const CommandPalette(),
+                if (s.overlay == Ov.capture) const QuickCapture(),
+                if (s.overlay == Ov.gate) const FrictionGate(),
+                const TourOverlay(),
+                const Toast(),
+              ],
             ),
-          ],
+          ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
       ),
     );
   }

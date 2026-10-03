@@ -1,5 +1,5 @@
 name: trajectory
-description: "A new Flutter project."
+description: "Trajectory — a private, local-first life OS for goals, habits and focus."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -34,6 +34,11 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  google_fonts: ^9.0.0
+  path_provider: ^2.1.6
+  crypto: ^3.0.7
+  http: ^1.6.0
+  window_manager: ^0.5.2
 
 dev_dependencies:
   flutter_test:
@@ -56,6 +61,11 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Bundled Google Fonts (OFL) so the app never fetches fonts at runtime.
+  assets:
+    - assets/google_fonts/
+    - assets/icon/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
