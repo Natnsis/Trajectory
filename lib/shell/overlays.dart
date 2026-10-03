@@ -21,19 +21,13 @@ class _Scrim extends StatelessWidget {
           color: Colors.black.withValues(alpha: alpha),
           alignment: Alignment.topCenter,
           padding: EdgeInsets.only(top: MediaQuery.sizeOf(context).height * top),
-          child: GestureDetector(onTap: () {}, child: FadeIn(ms: 180, child: child)),
+          // Keyboard-triggered and used constantly: no entrance animation.
+          child: GestureDetector(onTap: () {}, child: child),
         ),
       ),
     );
   }
 }
-
-BoxDecoration _sheet(Tokens t) => BoxDecoration(
-      color: t.panel2,
-      border: Border.all(color: t.line),
-      borderRadius: BorderRadius.circular(t.r),
-      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: .5), blurRadius: 60, offset: const Offset(0, 30), spreadRadius: -20)],
-    );
 
 class _Cmd {
   _Cmd(this.label, this.hint, this.run);
@@ -53,8 +47,8 @@ class _CommandPaletteState extends State<CommandPalette> {
 
   List<_Cmd> _cmds(AppState s) {
     final all = <_Cmd>[
-      for (final (_, items) in navGroups)
-        for (final (scr, l) in items) _Cmd('Go to $l', 'screen', () => scr == Screen.focus ? s.startFocus() : s.go(scr)),
+      for (final (_, _, items) in navGroups)
+        for (final (scr, l, _) in items) _Cmd('Go to $l', 'screen', () => scr == Screen.focus ? s.startFocus() : s.go(scr)),
       _Cmd('Go to Settings', 'screen', () => s.go(Screen.settings)),
       _Cmd('Start focus on next task', 'action', s.startFocus),
       _Cmd('Quick capture', 'Ctrl ⇧ Space', () => s.openOverlay(Ov.capture)),
@@ -90,10 +84,12 @@ class _CommandPaletteState extends State<CommandPalette> {
     _sel = _sel.clamp(0, cmds.isEmpty ? 0 : cmds.length - 1);
     return _Scrim(
       top: .14,
-      child: Container(
+      child: SizedBox(
         width: 600,
-        decoration: _sheet(t),
-        clipBehavior: Clip.antiAlias,
+        child: Glass(
+        elevated: true,
+        strong: true,
+        padding: EdgeInsets.zero,
         child: Material(
           type: MaterialType.transparency,
           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -153,6 +149,7 @@ class _CommandPaletteState extends State<CommandPalette> {
             ),
           ]),
         ),
+        ),
       ),
     );
   }
@@ -173,19 +170,22 @@ class _QuickCaptureState extends State<QuickCapture> {
     return _Scrim(
       top: .22,
       alpha: .25,
-      child: Container(
+      child: SizedBox(
         width: 640,
+        child: Glass(
+        elevated: true,
+        strong: true,
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-        decoration: _sheet(t),
         child: Material(
           type: MaterialType.transparency,
           child: VStack(gap: 10, children: [
-            Eyebrow('Quick capture · works from any screen', size: 10.5),
+            Text('Quick capture', style: t.body(size: 12.5, color: t.mute)),
             BareField(controller: _q, autofocus: true, size: 20, hint: 'fix JWT bug tomorrow 6pm', onChanged: (_) => setState(() {}), onSubmitted: s.addTask),
             Wrap(spacing: 6, runSpacing: 6, children: [
               for (final c in captureChips(_q.text, s.goalNames)) Chip2(c, bg: t.bSoft, fg: t.b),
             ]),
           ]),
+        ),
         ),
       ),
     );
@@ -215,7 +215,7 @@ class _FrictionGateState extends State<FrictionGate> {
             child: SizedBox(
               width: 560,
               child: VStack(gap: 18, children: [
-                Eyebrow('Friction gate · ${s.gateSite}', color: t.a),
+                Text('You\'re about to open ${s.gateSite}', style: t.body(size: 13, color: t.a)),
                 const Heading('Path A or Path B?', size: 36),
                 Muted(s.focusRun
                     ? 'You\'re ${s.focusMins} minutes into “${s.nextTask.title}”. Why do you want to open this?'
@@ -261,7 +261,10 @@ class Toast extends StatelessWidget {
       child: IgnorePointer(
         child: Center(
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
+            duration: Motion.base,
+            reverseDuration: const Duration(milliseconds: 120),
+            switchInCurve: Motion.easeOut,
+            switchOutCurve: Curves.easeIn,
             transitionBuilder: (c, a) => FadeTransition(
                 opacity: a, child: SlideTransition(position: Tween(begin: const Offset(0, .3), end: Offset.zero).animate(a), child: c)),
             child: s.toast.isEmpty

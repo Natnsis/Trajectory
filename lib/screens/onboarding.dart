@@ -5,6 +5,7 @@ import '../services/coach.dart';
 import '../services/security.dart';
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
+import '../theme/icons.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -85,14 +86,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     switch (step) {
       case 0:
         if (!RegExp(r'^\d{4,6}$').hasMatch(pin.text)) {
-          return 'PIN must be 4–6 digits';
+          return 'PIN must be 4-6 digits';
         }
         if (pin.text != pin2.text) return 'PINs don\'t match';
       case 1:
         if (!phraseSaved) return 'Confirm you\'ve saved the phrase';
       case 2:
         if (identity.text.trim().isEmpty) {
-          return 'Finish the sentence — it powers identity votes';
+          return 'Finish the sentence. It powers identity votes.';
         }
       case 3:
         final n = goals.where((g) => g.$1.text.trim().isNotEmpty).length;
@@ -103,7 +104,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         if (provider == 'Claude' && k.isNotEmpty && !looksLikeClaudeKey(k)) {
           return k.split(RegExp(r'\s+')).length >= 6
               ? 'That looks like your recovery phrase, not an API key. Keys start with "sk-ant-".'
-              : 'That isn\'t an Anthropic API key — keys start with "sk-ant-".';
+              : 'That isn\'t an Anthropic API key. Keys start with "sk-ant-".';
         }
     }
     return null;
@@ -212,7 +213,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                           ),
                           child: i < step
                               ? Icon(
-                                  Icons.check_rounded,
+                                  Ph.check,
                                   size: 12,
                                   color: t.bInk,
                                 )
@@ -288,7 +289,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           children: [
             _title('Create a PIN'),
             const Muted(
-              '4–6 digits. It locks the app on this machine. Only a salted hash is stored — never the PIN itself.',
+              '4-6 digits. It locks the app on this machine. Only a salted hash is stored, never the PIN itself.',
               size: 14,
             ),
             Wrap(
@@ -329,7 +330,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           children: [
             _title('Your recovery phrase'),
             const Muted(
-              'The only way back in if you forget your PIN. Write it down — it\'s shown once.',
+              'The only way back in if you forget your PIN. Write it down. It\'s shown once.',
               size: 14,
             ),
             _Tiles(
@@ -344,7 +345,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       vertical: 8,
                     ),
                     decoration: BoxDecoration(
-                      color: t.panel,
+                      color: insetFill(context),
                       border: Border.all(color: t.line),
                       borderRadius: BorderRadius.circular(t.rs),
                     ),
@@ -370,7 +371,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   onTap: () {
                     Clipboard.setData(ClipboardData(text: phrase.join(' ')));
                     context.appRead.flash(
-                      'Copied — paste it somewhere offline',
+                      'Copied. Paste it somewhere offline.',
                     );
                   },
                 ),
@@ -436,7 +437,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         return VStack(
           gap: 14,
           children: [
-            _title('3–5 vision goals'),
+            _title('3-5 vision goals'),
             const Muted('Name the goal and when you want it done.', size: 14),
             for (final g in goals)
               Row(
@@ -681,7 +682,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Widget _dash(Tokens t) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 4),
-    child: Text('–', style: t.mono(size: 20, color: t.mute)),
+    child: Text('-', style: t.mono(size: 20, color: t.mute)),
   );
 
   Widget _drop(
@@ -697,7 +698,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       dropdownColor: t.panel2,
       borderRadius: BorderRadius.circular(t.rs),
       menuMaxHeight: 320,
-      icon: Icon(Icons.expand_more_rounded, size: 16, color: t.mute),
+      icon: Icon(Ph.caretUpDown, size: 16, color: t.mute),
       style: t.mono(size: 20, weight: FontWeight.w600),
       items: [
         for (final o in options)

@@ -49,31 +49,12 @@ class ReviewScreen extends StatelessWidget {
           eyebrow: 'Weekly Review · ~10 min',
           title: 'The honest report',
           actions: [
-            if (s.reviewLoading)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: t.b,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    'writing your report…',
-                    style: t.mono(size: 12, color: t.mute),
-                  ),
-                ],
-              )
-            else
               Btn(
-                ai == null ? 'Write it with AI' : 'Rewrite with AI',
+                s.reviewLoading ? 'Writing…' : ai == null ? 'Write it with AI' : 'Rewrite with AI',
                 kind: ai == null ? BtnKind.primary : BtnKind.ghost,
                 size: 13,
                 pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                enabled: !s.reviewLoading,
                 onTap: s.generateReview,
               ),
           ],
@@ -157,16 +138,18 @@ class ReviewScreen extends StatelessWidget {
                               ),
                             ],
                           ),
-                          if (ai != null)
+                          if (s.reviewLoading)
+                        const VStack(gap: 10, children: [Skeleton(height: 14), Skeleton(height: 14), Skeleton(width: 420, height: 14)])
+                      else if (ai != null)
                             Text(
                               ai.report,
                               style: t.body(size: 16, height: 1.6),
                             )
                           else
                             Text(
-                              '${missed.isEmpty ? 'Nothing slipped on the planner.' : '${missed.length} planned block(s) slipped — ${missed.map((b) => b.title).join(', ')}. Blocks after 14:00 are the ones that slip.'} '
+                              '${missed.isEmpty ? 'Nothing slipped on the planner.' : '${missed.length} planned block(s) slipped: ${missed.map((b) => b.title).join(', ')}. Blocks after 14:00 are the ones that slip.'} '
                               '${s.reduce.fold<int>(0, (a, h) => a + h.urges)} urges logged. '
-                              '${pct >= 60 ? 'This was a decent week with one clear leak.' : 'A rough week — shrink the plan, don\'t abandon it.'}',
+                              '${pct >= 60 ? 'This was a decent week with one clear leak.' : 'A rough week. Shrink the plan, don\'t abandon it.'}',
                               style: t.body(size: 16, height: 1.6),
                             ),
                         ],
@@ -205,7 +188,7 @@ class ReviewScreen extends StatelessWidget {
                       2 => VStack(
                         gap: 10,
                         children: [
-                          const Strong('Slips — and why', size: 16),
+                          const Strong('Slips, and why', size: 16),
                           if (ai != null)
                             for (final (what, why) in ai.slips)
                               Divided(
@@ -325,7 +308,7 @@ class ReviewScreen extends StatelessWidget {
                             Muted(ai.nextWeek, size: 14)
                           else
                             Muted(
-                              '8h deep work (all mornings, ${s.profile.peakStart.toString().padLeft(2, '0')}–${s.profile.peakEnd}) · Gym Mon/Wed/Fri 07:00 · Spanish Tue/Thu at lunch · Feeds blocked after 22:00.',
+                              '8h deep work (all mornings, ${s.profile.peakStart.toString().padLeft(2, '0')}-${s.profile.peakEnd}). Gym Mon/Wed/Fri at 07:00. Spanish Tue/Thu at lunch. Feeds blocked after 22:00.',
                               size: 14,
                             ),
                           Container(

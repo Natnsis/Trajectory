@@ -43,16 +43,14 @@ class LockScreen extends StatelessWidget {
                     : Tap(
                         onTap: () => s.press(k),
                         pressScale: .96,
-                        builder: (_, hover, _) => Container(
+                        builder: (_, hover, _) => SizedBox(
                           width: 64,
                           height: 56,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: hover ? t.panel2 : t.panel,
-                            border: Border.all(color: t.line),
-                            borderRadius: BorderRadius.circular(t.r),
+                          child: Glass(
+                            padding: EdgeInsets.zero,
+                            tint: hover ? (t.dark ? Colors.white.withValues(alpha: .06) : Colors.white.withValues(alpha: .4)) : null,
+                            child: Center(child: Text(k, style: t.mono(size: 20, weight: FontWeight.w500))),
                           ),
-                          child: Text(k, style: t.mono(size: 20, weight: FontWeight.w500)),
                         ),
                         child: const SizedBox(),
                       ),
@@ -83,14 +81,14 @@ class LockScreen extends StatelessWidget {
           return VStack(gap: 12, children: [
             const Muted('Enter your 12-word recovery phrase, then choose a new PIN.'),
             Field(controller: phrase, hint: 'orbit maple quiet …', mono: true, minLines: 2, maxLines: 3),
-            Field(controller: pin, hint: 'New PIN (4–6 digits)', mono: true, obscure: true, maxLength: 6, keyboardType: TextInputType.number),
+            Field(controller: pin, hint: 'New PIN (4-6 digits)', mono: true, obscure: true, maxLength: 6, keyboardType: TextInputType.number),
             if (err.isNotEmpty) Text(err, style: t.mono(size: 12, color: t.a)),
             Row(mainAxisAlignment: MainAxisAlignment.end, children: [
               Btn('Cancel', onTap: () => Navigator.pop(ctx)),
               const SizedBox(width: 8),
               Btn('Reset PIN', kind: BtnKind.primary, onTap: () {
                 if (!RegExp(r'^\d{4,6}$').hasMatch(pin.text)) {
-                  setState(() => err = 'PIN must be 4–6 digits');
+                  setState(() => err = 'PIN must be 4-6 digits');
                   return;
                 }
                 if (ctx.appRead.recover(phrase.text, pin.text)) {

@@ -34,6 +34,13 @@ class Tokens {
     required this.bodyFont,
     required this.monoFont,
     required this.dark,
+    required this.chartA,
+    required this.chartB,
+    required this.glassFill,
+    required this.glassBorder,
+    required this.glassHighlight,
+    required this.glassShadow,
+    required this.ambient,
   });
 
   final Color bg, panel, panel2, line, ink, mute, a, aSoft, b, bSoft, bInk;
@@ -41,6 +48,19 @@ class Tokens {
   final String headFont, bodyFont, monoFont;
   final FontWeight headWeight;
   final bool headUpper;
+
+  /// Chart series colors: in-band steps of the accent / negative hues, run
+  /// through the dataviz validator (lightness band, chroma floor, CVD ΔE >= 8)
+  /// against this theme's panel surface. UI chrome keeps using [b] / [a].
+  final Color chartA, chartB;
+
+  /// Glass material: translucent fill over a backdrop blur, a 1px inner
+  /// border and a top highlight so edges catch light, and a hue-tinted shadow.
+  final Color glassFill, glassBorder, glassHighlight, glassShadow;
+
+  /// Soft color fields behind the glass (alignment, color, radius as a
+  /// fraction of the window's shortest side). Theme hues only, low alpha.
+  final List<(Alignment, Color, double)> ambient;
 
   /// Letter spacing in em.
   final double headTracking;
@@ -58,15 +78,26 @@ class Tokens {
     b: Color(0xFF61D19A),
     bSoft: Color(0x1F50C896),
     bInk: Color(0xFF08140F),
-    r: 14,
+    r: 12,
     rs: 8,
-    headFont: 'Geist',
-    headWeight: FontWeight.w600,
+    headFont: 'Mulish',
+    headWeight: FontWeight.w700,
     headUpper: false,
-    headTracking: -0.025,
-    bodyFont: 'Geist',
+    headTracking: -0.02,
+    bodyFont: 'Mulish',
     monoFont: 'Geist Mono',
     dark: true,
+    chartA: Color(0xFF26AB8B),
+    chartB: Color(0xFFA74546),
+    glassFill: Color(0x8C16171A),
+    glassBorder: Color(0x1FFFFFFF),
+    glassHighlight: Color(0x14FFFFFF),
+    glassShadow: Color(0x66000000),
+    ambient: [
+      (Alignment(-0.9, -1.0), Color(0x3361D19A), 0.9),
+      (Alignment(1.0, 0.9), Color(0x26C08A82), 0.8),
+      (Alignment(0.6, -0.6), Color(0x1A4F8CD6), 0.6),
+    ],
   );
 
   static const editorial = Tokens(
@@ -81,15 +112,26 @@ class Tokens {
     b: Color(0xFF1F6C9F),
     bSoft: Color(0xFFE1F3FE),
     bInk: Color(0xFFFFFFFF),
-    r: 10,
-    rs: 5,
+    r: 12,
+    rs: 8,
     headFont: 'Instrument Serif',
     headWeight: FontWeight.w400,
     headUpper: false,
     headTracking: -0.02,
-    bodyFont: 'Geist',
+    bodyFont: 'Mulish',
     monoFont: 'Geist Mono',
     dark: false,
+    chartA: Color(0xFF1F6C9F),
+    chartB: Color(0xFF9F2F2D),
+    glassFill: Color(0x9EFFFFFF),
+    glassBorder: Color(0xB3FFFFFF),
+    glassHighlight: Color(0xCCFFFFFF),
+    glassShadow: Color(0x1A1F3A5F),
+    ambient: [
+      (Alignment(-1.0, -0.9), Color(0x331F6C9F), 0.9),
+      (Alignment(1.0, 1.0), Color(0x269F2F2D), 0.75),
+      (Alignment(0.7, -0.8), Color(0x2EF2C14E), 0.55),
+    ],
   );
 
   static const telemetry = Tokens(
@@ -113,6 +155,16 @@ class Tokens {
     bodyFont: 'JetBrains Mono',
     monoFont: 'JetBrains Mono',
     dark: true,
+    chartA: Color(0xFF14B254),
+    chartB: Color(0xFFBE2323),
+    glassFill: Color(0x99111111),
+    glassBorder: Color(0x2E4AF626),
+    glassHighlight: Color(0x0F4AF626),
+    glassShadow: Color(0x80000000),
+    ambient: [
+      (Alignment(-1.0, -1.0), Color(0x1F4AF626), 0.8),
+      (Alignment(1.0, 0.8), Color(0x14FF2A2A), 0.7),
+    ],
   );
 
   static Tokens of(ThemeName n) => switch (n) {
@@ -146,7 +198,7 @@ class Tokens {
   String headText(String s) => headUpper ? s.toUpperCase() : s;
 
   /// Small uppercase mono label ("eyebrow").
-  TextStyle get eyebrow => mono(size: 11, weight: FontWeight.w500, color: mute, tracking: .08);
+  TextStyle get eyebrow => body(size: 11.5, weight: FontWeight.w600, color: mute, height: 1.3).copyWith(letterSpacing: .5);
 
   /// Equivalent of CSS color-mix(in oklab, b pct%, panel).
   Color mixB(double pct) => Color.lerp(panel, b, pct)!;
@@ -165,4 +217,20 @@ class TokensScope extends InheritedWidget {
 
 extension TokensContext on BuildContext {
   Tokens get t => TokensScope.of(this);
+}
+
+/// Motion tokens (Emil Kowalski's curves). Built-in curves are too soft.
+class Motion {
+  /// Entering / exiting UI: starts fast, feels responsive.
+  static const easeOut = Cubic(0.23, 1, 0.32, 1);
+
+  /// Moving or morphing on screen.
+  static const easeInOut = Cubic(0.77, 0, 0.175, 1);
+
+  static const press = Duration(milliseconds: 120);
+  static const quick = Duration(milliseconds: 160);
+  static const base = Duration(milliseconds: 220);
+
+  /// Honors the OS "reduce motion" setting: keep opacity, drop movement.
+  static bool reduced(BuildContext context) => MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 }

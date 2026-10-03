@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../shell/tour.dart';
 import '../widgets/common.dart';
 import '../theme/tokens.dart';
+import '../theme/icons.dart';
 
 class CommitmentsScreen extends StatefulWidget {
   const CommitmentsScreen({super.key});
@@ -56,7 +57,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
                     PopupMenuButton<bool>(
                       tooltip: 'Resolve',
                       color: t.panel2,
-                      icon: Icon(Icons.more_horiz, size: 16, color: t.mute),
+                      icon: Icon(Ph.dotsThree, size: 16, color: t.mute),
                       onSelected: (kept) => s.resolveContract(c, kept),
                       itemBuilder: (_) => [
                         PopupMenuItem(value: true, child: Text('Kept it', style: t.body(size: 13))),
@@ -110,7 +111,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
             child: VStack(gap: 8, children: [
               const Strong('Accountability partner'),
               if (s.profile.partnerEmail.isEmpty)
-                const Muted('No partner yet — add one in Settings.')
+                const Muted('No partner yet. Add one in Settings.')
               else
                 Row(children: [
                   Container(

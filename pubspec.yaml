@@ -62,6 +62,13 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # Phosphor Icons (MIT), bundled directly: the phosphor_flutter package
+  # doesn't compile on current Flutter.
+  fonts:
+    - family: PhosphorRegular
+      fonts:
+        - asset: assets/fonts/Phosphor-Regular.ttf
+
   # Bundled Google Fonts (OFL) so the app never fetches fonts at runtime.
   assets:
     - assets/google_fonts/

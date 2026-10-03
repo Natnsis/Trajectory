@@ -32,8 +32,8 @@ class _CoachScreenState extends State<CoachScreen> {
       });
     }
     final providerLine = switch (s.aiProvider) {
-      'Claude' => s.apiKey.isEmpty ? 'Claude · no key — offline coach' : 'Claude · ${CoachService.claudeModel}',
-      'Ollama' => 'Ollama · ${CoachService.ollamaModel} · local',
+      'Claude' => s.apiKey.isEmpty ? 'No key set, using the offline coach' : 'Claude · ${CoachService.claudeModel}',
+      'Ollama' => 'Ollama (${CoachService.ollamaModel}, local)',
       _ => 'Offline coach',
     };
     return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -75,7 +75,7 @@ class _CoachScreenState extends State<CoachScreen> {
                   ),
                 ),
               if (s.thinking) Text('coach is reading your week…', style: t.mono(size: 12, color: t.mute)),
-              if (s.coachError != null) Text('${s.coachError} — used the offline coach instead.', style: t.mono(size: 11.5, color: t.a)),
+              if (s.coachError != null) Text('${s.coachError} Used the offline coach instead.', style: t.mono(size: 11.5, color: t.a)),
             ]),
           ),
           Padding(
@@ -95,7 +95,7 @@ class _CoachScreenState extends State<CoachScreen> {
               ]),
               TourTarget(id: 'coach.chat', child: Container(
                 padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
-                decoration: BoxDecoration(color: t.panel, border: Border.all(color: t.line), borderRadius: BorderRadius.circular(t.r)),
+                decoration: BoxDecoration(color: insetFill(context), border: Border.all(color: t.line), borderRadius: BorderRadius.circular(t.r)),
                 child: Row(children: [
                   Expanded(child: BareField(controller: _q, hint: 'What\'s in the way today?', onSubmitted: _send)),
                   Btn('Send', kind: BtnKind.primary, size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), enabled: !s.thinking, onTap: () => _send(_q.text)),
@@ -110,7 +110,7 @@ class _CoachScreenState extends State<CoachScreen> {
         decoration: BoxDecoration(border: Border(left: BorderSide(color: t.line))),
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
         child: VStack(gap: 14, children: [
-          const Eyebrow('Context the coach sees'),
+          const Strong('What the coach sees'),
           TourTarget(id: 'coach.context', child: VStack(gap: 8, children: [
             CheckRow(value: s.coachContext['goals']!, label: '${s.goals.length} vision goals', onChanged: (v) => s.setCoachContext('goals', v)),
             CheckRow(value: s.coachContext['tasks']!, label: 'Today\'s tasks', onChanged: (v) => s.setCoachContext('tasks', v)),
@@ -121,7 +121,7 @@ class _CoachScreenState extends State<CoachScreen> {
           Divided(
             padding: const EdgeInsets.only(top: 14),
             child: VStack(gap: 6, children: [
-              const Eyebrow('Pattern insights'),
+              const Strong('Patterns'),
               Text('You finish 80% of tasks before noon.', style: t.body(size: 13)),
               Text('Rescheduled tasks have a 70% chance of slipping again.', style: t.body(size: 13)),
             ]),

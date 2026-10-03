@@ -16,7 +16,7 @@ class SettingsScreen extends StatelessWidget {
     final s = context.app;
     final t = context.t;
     return ScreenPage(maxWidth: 1100, children: [
-      const VStack(gap: 4, children: [Eyebrow('Settings'), Heading('Settings')]),
+      const Heading('Settings'),
       TourTarget(id: 'settings.grid', child: Grid(columns: 2, children: [
         _Section('Profile', [
           _Row('Name', s.profile.name, onTap: () => _text(context, 'Name', s.profile.name, (v) => s.setProfile(name: v))),
@@ -30,7 +30,7 @@ class SettingsScreen extends StatelessWidget {
         ]),
         _Section('AI provider', [
           _Row('Provider', s.profile.aiProvider, onTap: () => _pick(context, 'Provider', ['Claude', 'Ollama', 'None'], s.setProvider)),
-          _Row('Model', s.profile.aiProvider == 'Claude' ? 'claude-opus-5-5' : s.profile.aiProvider == 'Ollama' ? 'llama3.2' : '—'),
+          _Row('Model', s.profile.aiProvider == 'Claude' ? 'claude-opus-5-5' : s.profile.aiProvider == 'Ollama' ? 'llama3.2' : '-'),
           _Row('API key', s.apiKey.isEmpty ? 'Not set' : '••••${s.apiKey.substring(s.apiKey.length - 4)}',
               onTap: () => _text(context, 'Claude API key', '', (v) => s.setApiKey(v),
                   obscure: true,
@@ -55,6 +55,7 @@ class SettingsScreen extends StatelessWidget {
         _Section('Appearance', [
           _Row('Theme', s.theme.label, onTap: () => _pick(context, 'Theme', [for (final n in ThemeName.values) n.label], (v) => s.setTheme(ThemeName.values.firstWhere((n) => n.label == v)))),
           _Row('Decay metaphor', s.decayMetaphor, onTap: () => _pick(context, 'Decay metaphor', ['Plant', 'Flame'], s.setDecay)),
+          _Row('Glass effects', s.glassOn ? 'On' : 'Off (solid surfaces)', onTap: () => s.setGlass(!s.glassOn)),
         ]),
         _Section('Accountability', [
           _Row('Partner', s.profile.partnerEmail.isEmpty ? 'None' : '${s.profile.partnerName} · ${s.profile.partnerEmail}', onTap: () => _partner(context)),
@@ -75,7 +76,7 @@ class SettingsScreen extends StatelessWidget {
         Btn('Lock now', size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), onTap: s.lockNow),
         Btn('Erase all data', kind: BtnKind.outlineA, size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), onTap: () => _erase(context)),
       ])),
-      Text('Shortcuts: Ctrl K command palette · Ctrl ⇧ Space quick capture · Esc close', style: t.mono(size: 11.5, color: t.mute)),
+      Text('Shortcuts: Ctrl K opens the palette, Ctrl ⇧ Space captures, Esc closes', style: t.mono(size: 11.5, color: t.mute)),
     ]);
   }
 
@@ -124,7 +125,7 @@ class SettingsScreen extends StatelessWidget {
         final t = ctx.t;
         return VStack(gap: 12, children: [
           Field(controller: cur, hint: 'Current PIN', obscure: true, mono: true, autofocus: true),
-          Field(controller: next, hint: 'New PIN (4–6 digits)', obscure: true, mono: true),
+          Field(controller: next, hint: 'New PIN (4-6 digits)', obscure: true, mono: true),
           if (err.isNotEmpty) Text(err, style: t.mono(size: 12, color: t.a)),
           Row(mainAxisAlignment: MainAxisAlignment.end, children: [
             Btn('Cancel', size: 13, onTap: () => Navigator.pop(ctx)),
@@ -132,7 +133,7 @@ class SettingsScreen extends StatelessWidget {
             Btn('Change', kind: BtnKind.primary, size: 13, onTap: () {
               final s = ctx.appRead;
               if (!s.checkPin(cur.text)) return setState(() => err = 'Current PIN is wrong');
-              if (!RegExp(r'^\d{4,6}$').hasMatch(next.text)) return setState(() => err = 'PIN must be 4–6 digits');
+              if (!RegExp(r'^\d{4,6}$').hasMatch(next.text)) return setState(() => err = 'PIN must be 4-6 digits');
               s.setPin(next.text);
               s.flash('PIN changed');
               Navigator.pop(ctx);
@@ -155,7 +156,7 @@ class SettingsScreen extends StatelessWidget {
             const Muted('Write this down. Your old phrase no longer works.'),
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: t.panel, border: Border.all(color: t.line), borderRadius: BorderRadius.circular(t.rs)),
+              decoration: BoxDecoration(color: insetFill(ctx), border: Border.all(color: t.line), borderRadius: BorderRadius.circular(t.rs)),
               child: SelectableText(words!.join(' '), style: t.mono(size: 14)),
             ),
             Row(mainAxisAlignment: MainAxisAlignment.end, children: [Btn('Done', kind: BtnKind.primary, size: 13, onTap: () => Navigator.pop(ctx))]),

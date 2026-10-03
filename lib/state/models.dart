@@ -1,6 +1,9 @@
 // Plain data models. Everything here round-trips through JSON so the whole
 // app state can be persisted to a single file.
 
+/// Older saves used an em-dash as the empty placeholder.
+String _dash(String? v) => v == null || v == '\u2014' ? '-' : v;
+
 String newId() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
 
 String dayKey(DateTime d) =>
@@ -64,7 +67,7 @@ class Profile {
 }
 
 class Task {
-  Task({String? id, required this.title, this.time = '—', this.where = '—', this.goal = 'Inbox', this.done = false})
+  Task({String? id, required this.title, this.time = '-', this.where = '-', this.goal = 'Inbox', this.done = false})
       : id = id ?? newId();
   final String id;
   String title, time, where, goal;
@@ -72,7 +75,7 @@ class Task {
 
   Map<String, dynamic> toJson() => {'id': id, 't': title, 'time': time, 'where': where, 'goal': goal, 'done': done};
   factory Task.fromJson(Map<String, dynamic> j) =>
-      Task(id: j['id'], title: j['t'], time: j['time'], where: j['where'], goal: j['goal'], done: j['done'] ?? false);
+      Task(id: j['id'], title: j['t'], time: _dash(j['time']), where: _dash(j['where']), goal: j['goal'], done: j['done'] ?? false);
 }
 
 /// A daily check-in habit shown on Today.
@@ -197,7 +200,7 @@ class Milestone {
 const projectStatuses = ['Idea', 'Active', 'Paused', 'Shipped'];
 
 class Project {
-  Project({String? id, required this.name, required this.goal, required this.status, this.pct = 0, this.last = '—', this.notes = '', this.logged = 0, this.estimate = 0, this.reward = '', List<Milestone>? milestones})
+  Project({String? id, required this.name, required this.goal, required this.status, this.pct = 0, this.last = '-', this.notes = '', this.logged = 0, this.estimate = 0, this.reward = '', List<Milestone>? milestones})
       : id = id ?? newId(),
         milestones = milestones ?? [];
   final String id;
@@ -231,7 +234,7 @@ class Project {
       goal: j['goal'],
       status: j['status'],
       pct: j['pct'] ?? 0,
-      last: j['last'] ?? '—',
+      last: _dash(j['last'] ?? '-'),
       notes: j['notes'] ?? '',
       logged: (j['logged'] as num? ?? 0).toDouble(),
       estimate: (j['estimate'] as num? ?? 0).toDouble(),

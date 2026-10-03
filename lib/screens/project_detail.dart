@@ -62,7 +62,7 @@ class ProjectDetailScreen extends StatelessWidget {
             Panel(
               padding: const EdgeInsets.all(18),
               child: VStack(gap: 8, children: [
-                const Eyebrow('Reward on ship'),
+                const Muted('Reward on ship', size: 12.5),
                 Strong(p.reward),
                 Bar(pct: p.computedPct.toDouble()),
                 Muted('Unlocks when ${p.milestones.isEmpty ? 'the project ships' : '${p.milestones.last.name} is checked'}', size: 12),
@@ -71,11 +71,11 @@ class ProjectDetailScreen extends StatelessWidget {
           Panel(
             padding: const EdgeInsets.all(18),
             child: Text.rich(TextSpan(style: t.body(size: 12.5, color: t.mute), children: [
-              const TextSpan(text: 'Every task carries an implementation intention — '),
+              const TextSpan(text: 'Every task carries an implementation intention: '),
               TextSpan(text: 'when', style: t.body(size: 12.5)),
               const TextSpan(text: ' + '),
               TextSpan(text: 'where', style: t.body(size: 12.5)),
-              const TextSpan(text: ' — so it lands on the Planner automatically.'),
+              const TextSpan(text: ', so it lands on the Planner automatically.'),
             ])),
           ),
         ]),

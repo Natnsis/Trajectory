@@ -6,8 +6,8 @@ import 'models.dart';
 List<Task> seedTasks() => [
       Task(title: 'Morning pages', time: '07:15', where: 'kitchen', goal: 'Read 24 books', done: true),
       Task(title: 'Write auth middleware tests', time: '09:30', where: 'desk', goal: 'Ship Surge v1'),
-      Task(title: 'Billing spec — first draft', time: '11:00', where: 'desk', goal: 'Ship Surge v1'),
-      Task(title: 'Gym — legs', time: '17:00', where: 'downtown', goal: 'Run a half'),
+      Task(title: 'Billing spec, first draft', time: '11:00', where: 'desk', goal: 'Ship Surge v1'),
+      Task(title: 'Gym: legs', time: '17:00', where: 'downtown', goal: 'Run a half'),
       Task(title: 'Spanish · 20 min Anki', time: '20:30', where: 'couch', goal: 'Spanish'),
     ];
 
@@ -70,7 +70,7 @@ List<Project> seedProjects() => [
       Project(id: 'land', name: 'Surge landing page', goal: 'Ship Surge v1', status: 'Active', pct: 20, last: '4d'),
       Project(id: '5k', name: 'Couch → half plan', goal: 'Run a half marathon', status: 'Active', pct: 30, last: '12d'),
       Project(id: 'blog', name: 'Blog redesign', goal: 'Ship Surge v1', status: 'Paused', pct: 45, last: '41d'),
-      Project(id: 'cli', name: 'tidy — CLI tool', goal: 'Ship Surge v1', status: 'Shipped', pct: 100, last: 'Jun'),
+      Project(id: 'cli', name: 'tidy, a CLI tool', goal: 'Ship Surge v1', status: 'Shipped', pct: 100, last: 'Jun'),
       Project(id: 'b1', name: 'Spanish A2 exam', goal: 'Conversational Spanish', status: 'Shipped', pct: 100, last: 'Aug'),
     ];
 
@@ -103,7 +103,7 @@ List<Proof> seedProof() => [
       Proof(date: 'Sep 28', title: 'First 10k under an hour', goal: 'Run a half'),
       Proof(date: 'Sep 20', title: 'Finished “Four Thousand Weeks”', goal: 'Read 24 books'),
       Proof(date: 'Aug 14', title: 'Passed Spanish A2', goal: 'Spanish'),
-      Proof(date: 'Jun 30', title: 'Shipped tidy CLI — 214 users', goal: 'Ship Surge v1'),
+      Proof(date: 'Jun 30', title: 'Shipped tidy CLI (214 users)', goal: 'Ship Surge v1'),
     ];
 
 List<Reward> seedRewards() => [
@@ -114,5 +114,5 @@ List<Reward> seedRewards() => [
 
 List<ChatMsg> seedMsgs() => [
       ChatMsg(false,
-          'Morning. You have one hard thing today: the auth tests. You usually finish hard things before 11. Want me to block 09:30–11:00 and move the billing draft to tomorrow morning?'),
+          'Morning. You have one hard thing today: the auth tests. You usually finish hard things before 11. Want me to block 09:30-11:00 and move the billing draft to tomorrow morning?'),
     ];

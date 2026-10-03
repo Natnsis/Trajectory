@@ -66,7 +66,7 @@ class TrajectoryApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           theme: ThemeData(
             brightness: t.dark ? Brightness.dark : Brightness.light,
-            scaffoldBackgroundColor: t.bg,
+            scaffoldBackgroundColor: Colors.transparent,
             colorScheme: ColorScheme.fromSeed(
               seedColor: t.b,
               brightness: t.dark ? Brightness.dark : Brightness.light,
@@ -190,53 +190,48 @@ class _RootViewState extends State<RootView> {
     final t = context.t;
     return Scaffold(
       backgroundColor: t.bg,
-      body: WindowChrome(
-        child: Listener(
-          onPointerDown: (_) => s.touch(),
-          onPointerHover: (_) => s.touch(),
-          child: DefaultTextStyle(
-            style: t.body(),
-            child: Stack(
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (s.shell) const Sidebar(),
-                    Expanded(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 180),
-                        switchInCurve: Curves.easeOut,
-                        transitionBuilder: (c, a) =>
-                            FadeTransition(opacity: a, child: c),
-                        // Expand so screens fill the pane instead of being centered.
-                        layoutBuilder: (cur, prev) => Stack(
-                          fit: StackFit.expand,
-                          children: [...prev, ?cur],
-                        ),
+      body: AmbientBackground(
+        child: WindowChrome(
+          child: Listener(
+            onPointerDown: (_) => s.touch(),
+            onPointerHover: (_) => s.touch(),
+            child: DefaultTextStyle(
+              style: t.body(),
+              child: Stack(
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (s.shell) const Sidebar(),
+                      Expanded(
                         child: KeyedSubtree(
                           key: ValueKey(s.screen),
                           child: _screen(s.screen),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                if (s.tray)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onTap: s.toggleTray,
-                      behavior: HitTestBehavior.translucent,
-                      child: const SizedBox(),
-                    ),
+                    ],
                   ),
-                if (s.tray)
-                  const Positioned(left: 12, bottom: 118, child: TrayWidget()),
-                if (s.overlay == Ov.palette) const CommandPalette(),
-                if (s.overlay == Ov.capture) const QuickCapture(),
-                if (s.overlay == Ov.gate) const FrictionGate(),
-                const TourOverlay(),
-                const Toast(),
-              ],
+                  if (s.tray)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTap: s.toggleTray,
+                        behavior: HitTestBehavior.translucent,
+                        child: const SizedBox(),
+                      ),
+                    ),
+                  if (s.tray)
+                    const Positioned(
+                      left: 80,
+                      bottom: 74,
+                      child: TrayWidget(),
+                    ),
+                  if (s.overlay == Ov.palette) const CommandPalette(),
+                  if (s.overlay == Ov.capture) const QuickCapture(),
+                  if (s.overlay == Ov.gate) const FrictionGate(),
+                  const TourOverlay(),
+                  const Toast(),
+                ],
+              ),
             ),
           ),
         ),

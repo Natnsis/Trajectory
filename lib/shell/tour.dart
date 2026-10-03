@@ -111,8 +111,8 @@ class _TourOverlayState extends State<TourOverlay> {
               onTap: () {},
               child: TweenAnimationBuilder<Rect?>(
                 tween: RectTween(end: hole ?? Rect.fromCenter(center: size.center(Offset.zero), width: 0, height: 0)),
-                duration: const Duration(milliseconds: 260),
-                curve: Curves.easeOutCubic,
+                duration: Motion.reduced(context) ? Duration.zero : const Duration(milliseconds: 240),
+                curve: Motion.easeInOut,
                 builder: (_, r, _) => CustomPaint(painter: _ScrimPainter(r, context.t)),
               ),
             ),
@@ -189,8 +189,8 @@ class _Card extends StatelessWidget {
     top = top.clamp(16, math.max(16, area.height - _estH - 16));
 
     return AnimatedPositioned(
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
+      duration: Motion.reduced(context) ? Duration.zero : const Duration(milliseconds: 240),
+      curve: Motion.easeInOut,
       left: left,
       top: top,
       width: _w,
@@ -199,14 +199,10 @@ class _Card extends StatelessWidget {
         child: FadeIn(
           key: ValueKey('${s.tourScreen}-$index'),
           ms: 220,
-          child: Container(
+          child: Glass(
+            elevated: true,
+            strong: true,
             padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-            decoration: BoxDecoration(
-              color: t.panel2,
-              border: Border.all(color: t.line),
-              borderRadius: BorderRadius.circular(t.r),
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: .4), blurRadius: 40, offset: const Offset(0, 18), spreadRadius: -10)],
-            ),
             child: VStack(gap: 10, children: [
               Row(children: [
                 Eyebrow('${s.tourScreen == null ? '' : tourTitles[s.tourScreen]} · ${index + 1} of $total', color: t.b, weight: FontWeight.w600),

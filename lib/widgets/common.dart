@@ -1,9 +1,11 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
+import '../theme/icons.dart';
 
 // ------------------------------------------------------------------ scope
 
@@ -115,33 +117,164 @@ class Panel extends StatelessWidget {
   const Panel({super.key, required this.child, this.padding = const EdgeInsets.all(20), this.color, this.border = true, this.borderColor, this.topAccent, this.borderWidth = 1});
   final Widget child;
   final EdgeInsets padding;
-  final Color? color, borderColor, topAccent;
+
+  /// Optional tint laid over the glass (e.g. bSoft for callouts).
+  final Color? color;
+  final Color? borderColor, topAccent;
   final bool border;
   final double borderWidth;
 
   @override
+  Widget build(BuildContext context) => Glass(
+        padding: padding,
+        tint: color,
+        border: border,
+        borderColor: borderColor,
+        borderWidth: borderWidth,
+        topAccent: topAccent,
+        child: child,
+      );
+}
+
+/// Whether glass is on. Off = solid surfaces (Settings toggle, or the OS
+/// high-contrast setting, which stands in for "reduce transparency").
+class GlassMode extends InheritedWidget {
+  const GlassMode({super.key, required this.enabled, required super.child});
+  final bool enabled;
+  static bool of(BuildContext context) {
+    final on = context.dependOnInheritedWidgetOfExactType<GlassMode>()?.enabled ?? true;
+    return on && !MediaQuery.highContrastOf(context);
+  }
+
+  @override
+  bool updateShouldNotify(GlassMode old) => old.enabled != enabled;
+}
+
+/// Frosted-glass surface: backdrop blur + translucent fill + 1px inner border
+/// + top highlight + tinted shadow. Falls back to a solid panel.
+class Glass extends StatelessWidget {
+  const Glass({
+    super.key,
+    required this.child,
+    this.padding = const EdgeInsets.all(20),
+    this.radius,
+    this.tint,
+    this.blur = 22,
+    this.border = true,
+    this.borderColor,
+    this.borderWidth = 1,
+    this.topAccent,
+    this.elevated = false,
+    this.strong = false,
+  });
+  final Widget child;
+  final EdgeInsets padding;
+  final double? radius;
+  final Color? tint;
+  final double blur;
+  final bool border;
+  final Color? borderColor;
+  final double borderWidth;
+  final Color? topAccent;
+
+  /// Floating surfaces (popovers, dialogs, tour card) get a deeper shadow.
+  final bool elevated;
+
+  /// Denser fill for surfaces that carry lots of text over busy backdrops.
+  final bool strong;
+
+  @override
   Widget build(BuildContext context) {
     final t = context.t;
-    final r = BorderRadius.circular(t.r);
-    Widget box = Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        color: color ?? t.panel,
-        borderRadius: r,
-        border: border ? Border.all(color: borderColor ?? t.line, width: borderWidth) : null,
+    final r = BorderRadius.circular(radius ?? t.r);
+    final on = GlassMode.of(context);
+    final edge = borderColor ?? (on ? t.glassBorder : t.line);
+    final shadow = [
+      BoxShadow(
+        color: on ? t.glassShadow : Colors.black.withValues(alpha: t.dark ? .25 : .05),
+        blurRadius: elevated ? 48 : 24,
+        spreadRadius: elevated ? -8 : -12,
+        offset: Offset(0, elevated ? 20 : 10),
       ),
-      child: child,
-    );
-    if (topAccent != null) {
-      box = ClipRRect(
+    ];
+
+    Widget body = Padding(padding: padding, child: child);
+    final layers = <Widget>[
+      if (tint != null) Positioned.fill(child: ColoredBox(color: tint!)),
+      if (on)
+        // Inner top highlight: light catching the upper edge.
+        Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          height: 48,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [t.glassHighlight, t.glassHighlight.withValues(alpha: 0)],
+                ),
+              ),
+            ),
+          ),
+        ),
+      if (topAccent != null) Positioned(left: 0, right: 0, top: 0, child: Container(height: 3, color: topAccent)),
+    ];
+
+    final fill = on ? (strong ? Color.alphaBlend(t.glassFill, t.glassFill) : t.glassFill) : t.panel;
+    Widget surface = Container(
+      decoration: BoxDecoration(
+        color: fill,
         borderRadius: r,
-        child: Stack(children: [
-          box,
-          Positioned(left: 0, right: 0, top: 0, child: Container(height: 3, color: topAccent)),
-        ]),
-      );
-    }
-    return box;
+        border: border ? Border.all(color: edge, width: borderWidth) : null,
+      ),
+      child: layers.isEmpty ? body : Stack(children: [...layers, body]),
+    );
+    surface = ClipRRect(
+      borderRadius: r,
+      child: on
+          ? BackdropFilter.grouped(
+              filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur, tileMode: TileMode.mirror),
+              child: surface,
+            )
+          : surface,
+    );
+    return DecoratedBox(decoration: BoxDecoration(borderRadius: r, boxShadow: shadow), child: surface);
+  }
+}
+
+/// Soft color fields that give the glass something to frost.
+class AmbientBackground extends StatelessWidget {
+  const AmbientBackground({super.key, required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final on = GlassMode.of(context);
+    return LayoutBuilder(builder: (context, c) {
+      final side = math.min(c.maxWidth, c.maxHeight);
+      return Stack(children: [
+        Positioned.fill(child: ColoredBox(color: t.bg)),
+        if (on)
+          for (final (align, color, frac) in t.ambient)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: align,
+                      radius: frac * side / math.max(c.maxWidth, 1) * 1.6,
+                      colors: [color, color.withValues(alpha: 0)],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        Positioned.fill(child: child),
+      ]);
+    });
   }
 }
 
@@ -170,14 +303,14 @@ class Divided extends StatelessWidget {
 // ------------------------------------------------------------------ text
 
 class Eyebrow extends StatelessWidget {
-  const Eyebrow(this.text, {super.key, this.color, this.size = 11, this.weight = FontWeight.w500});
+  const Eyebrow(this.text, {super.key, this.color, this.size = 11.5, this.weight = FontWeight.w600});
   final String text;
   final Color? color;
   final double size;
   final FontWeight weight;
   @override
   Widget build(BuildContext context) => Text(text.toUpperCase(),
-      style: context.t.mono(size: size, weight: weight, color: color ?? context.t.mute, tracking: weight == FontWeight.w600 ? .06 : .08));
+      style: context.t.body(size: size, weight: weight, color: color ?? context.t.mute, height: 1.3).copyWith(letterSpacing: size * .045));
 }
 
 class Heading extends StatelessWidget {
@@ -285,7 +418,7 @@ class _BtnState extends State<Btn> {
           onTapUp: (_) => setState(() => _down = false),
           onTapCancel: () => setState(() => _down = false),
           onTap: active ? widget.onTap : null,
-          child: AnimatedScale(scale: _down && active ? .97 : 1, duration: const Duration(milliseconds: 90), child: child),
+          child: AnimatedScale(scale: _down && active ? .97 : 1, duration: Motion.press, curve: Motion.easeOut, child: child),
         ),
       ),
     );
@@ -318,13 +451,13 @@ class _TapState extends State<Tap> {
         onTapUp: (_) => setState(() => _down = false),
         onTapCancel: () => setState(() => _down = false),
         onTap: widget.onTap,
-        child: AnimatedScale(scale: _down ? widget.pressScale : 1, duration: const Duration(milliseconds: 90), child: c),
+        child: AnimatedScale(scale: _down ? widget.pressScale : 1, duration: Motion.press, curve: Motion.easeOut, child: c),
       ),
     );
   }
 }
 
-/// Joined segmented control (ink-filled selection).
+/// Segmented control: raised pill on a recessed track (Day / Week / Month).
 class Segmented<T> extends StatelessWidget {
   const Segmented({super.key, required this.options, required this.value, required this.onChanged, this.mono = false, this.size = 13});
   final List<(T, String)> options;
@@ -335,21 +468,28 @@ class Segmented<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
+    final track = t.dark ? Colors.white.withValues(alpha: .06) : Colors.black.withValues(alpha: .05);
+    final pill = t.dark ? Colors.white.withValues(alpha: .12) : Colors.white;
     return Container(
-      decoration: BoxDecoration(border: Border.all(color: t.line), borderRadius: BorderRadius.circular(t.rs)),
-      clipBehavior: Clip.antiAlias,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(color: track, borderRadius: BorderRadius.circular(t.rs + 2)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         for (final (v, l) in options)
           Tap(
             onTap: () => onChanged(v),
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              color: v == value ? t.ink : Colors.transparent,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              duration: Motion.quick,
+              curve: Motion.easeOut,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: v == value ? pill : Colors.transparent,
+                borderRadius: BorderRadius.circular(t.rs),
+                boxShadow: v == value ? [BoxShadow(color: Colors.black.withValues(alpha: t.dark ? .3 : .08), blurRadius: 6, offset: const Offset(0, 1))] : null,
+              ),
               child: Text(l,
                   style: mono
-                      ? t.mono(size: size - .5, weight: FontWeight.w500, color: v == value ? t.bg : t.mute)
-                      : t.body(size: size, weight: FontWeight.w500, color: v == value ? t.bg : t.mute, height: 1.3)),
+                      ? t.mono(size: size - .5, weight: FontWeight.w600, color: v == value ? t.ink : t.mute)
+                      : t.body(size: size, weight: FontWeight.w600, color: v == value ? t.ink : t.mute, height: 1.3)),
             ),
           ),
       ]),
@@ -453,7 +593,7 @@ class Field extends StatelessWidget {
         hintText: hint,
         hintStyle: style.copyWith(color: t.mute),
         filled: true,
-        fillColor: fill ?? t.panel,
+        fillColor: fill == null || fill == t.bg || fill == t.panel ? insetFill(context) : fill,
         contentPadding: pad ?? const EdgeInsets.all(10),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(t.rs), borderSide: BorderSide(color: t.line)),
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(t.rs), borderSide: BorderSide(color: t.line)),
@@ -533,7 +673,7 @@ class TickBox extends StatelessWidget {
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(color: done ? t.b : t.mute, width: 1.5),
       ),
-      child: done ? Icon(Icons.check_rounded, size: size * .7, color: t.bInk) : null,
+      child: done ? Icon(Ph.check, size: size * .7, color: t.bInk) : null,
     );
   }
 }
@@ -554,10 +694,11 @@ class Ring extends StatelessWidget {
       height: size,
       child: TweenAnimationBuilder<double>(
         tween: Tween(end: pct.clamp(0, 100)),
-        duration: const Duration(milliseconds: 500),
-        curve: Curves.easeOutCubic,
+        duration: const Duration(milliseconds: 250),
+        curve: Motion.easeOut,
         builder: (_, v, c) => CustomPaint(
-          painter: _RingPainter(v / 100, color ?? t.b, t.line, thickness),
+          // Meter track is a lighter step of the same hue (dataviz meter spec).
+          painter: _RingPainter(v / 100, color ?? t.b, (color ?? t.b).withValues(alpha: .16), thickness),
           child: c,
         ),
         child: Center(child: child),
@@ -597,50 +738,17 @@ class Bar extends StatelessWidget {
       borderRadius: BorderRadius.circular(height / 2),
       child: Container(
         height: height,
-        color: t.line,
+        color: (color ?? t.b).withValues(alpha: .16),
         alignment: Alignment.centerLeft,
         child: TweenAnimationBuilder<double>(
           tween: Tween(end: (pct / 100).clamp(0, 1)),
-          duration: const Duration(milliseconds: 400),
+          duration: const Duration(milliseconds: 250),
+          curve: Motion.easeOut,
           builder: (_, v, _) => FractionallySizedBox(widthFactor: v, child: Container(color: color ?? t.b)),
         ),
       ),
     );
   }
-}
-
-/// Vertical bar chart (heights in %).
-class Bars extends StatelessWidget {
-  const Bars({super.key, required this.values, required this.height, required this.colorFor, this.gap = 4, this.radius = 2, this.opacityFor});
-  final List<double> values;
-  final double height, gap, radius;
-  final Color Function(int i, double v) colorFor;
-  final double Function(int i)? opacityFor;
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        height: height,
-        child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          for (var i = 0; i < values.length; i++) ...[
-            if (i > 0) SizedBox(width: gap),
-            Expanded(
-              child: Opacity(
-                opacity: opacityFor?.call(i) ?? 1,
-                child: TweenAnimationBuilder<double>(
-                  tween: Tween(end: (values[i] / 100).clamp(0, 1)),
-                  duration: const Duration(milliseconds: 500),
-                  curve: Curves.easeOutCubic,
-                  builder: (_, v, _) => Container(
-                    height: height * v,
-                    decoration: BoxDecoration(
-                        color: colorFor(i, values[i]),
-                        borderRadius: BorderRadius.vertical(top: Radius.circular(radius))),
-                  ),
-                ),
-              ),
-            ),
-          ]
-        ]),
-      );
 }
 
 /// Diagonal hatched placeholder box (repeating-linear-gradient 45deg).
@@ -783,19 +891,24 @@ class _MarkPainter extends CustomPainter {
   bool shouldRepaint(_MarkPainter o) => o.c != c;
 }
 
-/// Fade+rise entrance (`@keyframes tIn`).
+/// Fade+rise entrance for occasional surfaces (dialogs, cards, tour steps).
+/// Never used on keyboard-triggered overlays. Reduced motion keeps the fade
+/// and drops the movement.
 class FadeIn extends StatelessWidget {
-  const FadeIn({super.key, required this.child, this.ms = 250});
+  const FadeIn({super.key, required this.child, this.ms = 220});
   final Widget child;
   final int ms;
   @override
-  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
-        tween: Tween(begin: 0, end: 1),
-        duration: Duration(milliseconds: ms),
-        curve: Curves.easeOut,
-        builder: (_, v, c) => Opacity(opacity: v, child: Transform.translate(offset: Offset(0, 8 * (1 - v)), child: c)),
-        child: child,
-      );
+  Widget build(BuildContext context) {
+    final still = Motion.reduced(context);
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: ms),
+      curve: Motion.easeOut,
+      builder: (_, v, c) => Opacity(opacity: v, child: still ? c : Transform.translate(offset: Offset(0, 6 * (1 - v)), child: c)),
+      child: child,
+    );
+  }
 }
 
 /// Labeled key/value stat.
@@ -824,23 +937,100 @@ Future<T?> showTDialog<T>(BuildContext context, {required String title, required
   final state = context.appRead;
   return showDialog<T>(
     context: context,
-    barrierColor: Colors.black.withValues(alpha: .45),
+    barrierColor: Colors.black.withValues(alpha: t.dark ? .35 : .18),
     builder: (ctx) => AppScope(
       state: state,
       child: TokensScope(
         tokens: t,
         child: Dialog(
-          backgroundColor: t.panel2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(t.r), side: BorderSide(color: t.line)),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
           child: SizedBox(
             width: width,
-            child: Padding(
-              padding: const EdgeInsets.all(22),
-              child: VStack(gap: 14, children: [Heading(title, size: 22), Builder(builder: body)]),
+            child: BackdropGroup(
+              child: Glass(
+                elevated: true,
+                strong: true,
+                padding: const EdgeInsets.all(22),
+                child: VStack(gap: 14, children: [Heading(title, size: 22), Builder(builder: body)]),
+              ),
             ),
           ),
         ),
       ),
     ),
   );
+}
+
+/// Loading placeholder shaped like the content it stands in for.
+class Skeleton extends StatefulWidget {
+  const Skeleton({super.key, this.width, this.height = 12, this.radius});
+  final double? width;
+  final double height;
+  final double? radius;
+  @override
+  State<Skeleton> createState() => _SkeletonState();
+}
+
+class _SkeletonState extends State<Skeleton> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // A slow pulse says "still working"; reduced motion keeps it static.
+    Motion.reduced(context) ? _c.stop() : _c.repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return FadeTransition(
+      opacity: Tween(begin: .55, end: 1.0).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
+      child: Container(
+        width: widget.width,
+        height: widget.height,
+        decoration: BoxDecoration(color: t.line, borderRadius: BorderRadius.circular(widget.radius ?? t.rs / 2 + 2)),
+      ),
+    );
+  }
+}
+
+/// Header KPI strip: thin colored bar, caps label, large value.
+class KpiStrip extends StatelessWidget {
+  const KpiStrip({super.key, required this.items});
+  final List<(String, String, Color)> items;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      for (var i = 0; i < items.length; i++) ...[
+        if (i > 0) const SizedBox(width: 26),
+        IntrinsicHeight(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Container(width: 2.5, decoration: BoxDecoration(color: items[i].$3, borderRadius: BorderRadius.circular(2))),
+            const SizedBox(width: 9),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Eyebrow(items[i].$1, size: 10.5),
+              const SizedBox(height: 2),
+              Text(items[i].$2, style: t.body(size: 21, weight: FontWeight.w700, height: 1.15)),
+            ]),
+          ]),
+        ),
+      ],
+    ]);
+  }
+}
+
+/// Recessed fill for inputs and chips sitting on glass.
+Color insetFill(BuildContext context) {
+  final t = context.t;
+  if (!GlassMode.of(context)) return t.panel;
+  return t.dark ? Colors.white.withValues(alpha: .045) : Colors.white.withValues(alpha: .6);
 }

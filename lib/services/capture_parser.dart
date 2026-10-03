@@ -26,7 +26,7 @@ String guessGoal(String text, List<String> goalNames) {
 }
 
 Capture parseCapture(String text, List<String> goalNames) {
-  var time = '—';
+  var time = '-';
   final m = _timeRe.firstMatch(text);
   if (m != null) {
     var h = int.parse(m.group(1)!);
@@ -45,7 +45,7 @@ Capture parseCapture(String text, List<String> goalNames) {
 }
 
 List<String> captureChips(String q, List<String> goalNames) {
-  if (q.isEmpty) return ['type naturally — date, time and goal are detected'];
+  if (q.isEmpty) return ['Type naturally. Date, time and goal are detected.'];
   final chips = <String>[];
   chips.add(RegExp(r'tomorrow', caseSensitive: false).hasMatch(q) ? 'date: tomorrow' : 'date: today');
   final tm = _timeRe.firstMatch(q);

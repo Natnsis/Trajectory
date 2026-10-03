@@ -6,9 +6,9 @@ import '../widgets/common.dart';
 
 const _letters = {
   'A':
-      "It's {h} later and {project} is still a folder called final-2. You told people it was almost done for most of that time. The evenings went somewhere — mostly to a feed you can't remember a single post from. You're not in bad shape, just the same shape. The good news: it was never a talent problem. It was 10pm.",
+      "It's {h} later and {project} is still a folder called final-2. You told people it was almost done for most of that time. The evenings went somewhere, mostly to a feed you can't remember a single post from. You're not in bad shape, just the same shape. The good news: it was never a talent problem. It was 10pm.",
   'B':
-      "It's {h} later. {project} is real — not perfect, but real, and people use it. You did it in mornings, mostly before anyone was awake. The hard goal hurt and you'd do it again. None of this came from a big change; it came from moving the hard work before noon and leaving the phone in the kitchen.",
+      "It's {h} later. {project} is real. Not perfect, but real, and people use it. You did it in mornings, mostly before anyone was awake. The hard goal hurt and you'd do it again. None of this came from a big change; it came from moving the hard work before noon and leaving the phone in the kitchen.",
 };
 
 class MirrorScreen extends StatelessWidget {
@@ -50,16 +50,16 @@ class MirrorScreen extends StatelessWidget {
             Heading('Dear ${s.profile.name},', size: 20),
             Text(_letters[s.letter]!.replaceAll('{h}', long).replaceAll('{project}', project),
                 style: t.body(size: 14.5, color: t.mute, height: 1.65)),
-            Text('— you, $long from now', style: t.body(size: 13)),
+            Text('- you, $long from now', style: t.body(size: 13)),
           ]),
         )),
         right: TourTarget(id: 'mirror.recovery', child: Callout(
           padding: const EdgeInsets.all(22),
           child: VStack(gap: 10, children: [
-            Eyebrow('Move to Path B · 3 days', color: t.b, weight: FontWeight.w600),
-            _step(t, '1', 'Tonight', ' — 10 min on $project. Just open the file.'),
-            _step(t, '2', 'Sunday 07:30', ' — easy 3k run, shoes by the door tonight.'),
-            _step(t, '3', 'Monday', ' — phone charges in the kitchen after 22:00.'),
+            Strong('Move to Path B in three days'),
+            _step(t, '1', 'Tonight', ': 10 min on $project. Just open the file.'),
+            _step(t, '2', 'Sunday 07:30', ': easy 3k run, shoes by the door tonight.'),
+            _step(t, '3', 'Monday', ': phone charges in the kitchen after 22:00.'),
             const SizedBox(height: 8),
             Row(children: [
               Btn(s.recoveryAdded ? 'Added to Planner ✓' : 'Add 3-day plan to Planner', kind: BtnKind.primary, onTap: s.recoveryAdded ? null : s.addRecovery),

@@ -34,7 +34,7 @@ class AppState extends ChangeNotifier {
   String pinHash = '', pinSalt = '', phraseHash = '', phraseSalt = '';
   int autoLockMinutes = 10;
   int nudgesPerDay = 3;
-  String quietHours = '22:30–07:00';
+  String quietHours = '22:30-07:00';
   String decayMetaphor = 'Plant';
   List<String> blockList = ['x.com', 'youtube.com', 'reddit.com'];
   bool localOnly = false;
@@ -63,6 +63,8 @@ class AppState extends ChangeNotifier {
   Map<String, bool> coachContext = {'goals': true, 'tasks': true, 'habits': true, 'urges': false};
   double focusMinutesLogged = 0;
   Set<String> toursSeen = {};
+  bool glassOn = true;
+  bool sidebarCollapsed = false;
 
   String apiKey = '';
 
@@ -230,7 +232,7 @@ class AppState extends ChangeNotifier {
   }
 
   Task get nextTask =>
-      tasks.firstWhere((t) => !t.done, orElse: () => Task(id: '_none', title: 'Nothing left — plan tomorrow', goal: '—'));
+      tasks.firstWhere((t) => !t.done, orElse: () => Task(id: '_none', title: 'Nothing left, plan tomorrow', goal: '-'));
 
   String get focusClock {
     final m = focusSec ~/ 60, s = focusSec % 60;
@@ -512,7 +514,7 @@ class AppState extends ChangeNotifier {
   void addTask(String text) {
     if (text.trim().isEmpty) return;
     final c = parseCapture(text, goalNames);
-    tasks.add(Task(title: c.title, time: c.time, where: c.tomorrow ? 'tomorrow' : '—', goal: c.goal));
+    tasks.add(Task(title: c.title, time: c.time, where: c.tomorrow ? 'tomorrow' : '-', goal: c.goal));
     overlay = Ov.none;
     _changed();
     flash('Captured → ${c.goal}');
@@ -538,11 +540,11 @@ class AppState extends ChangeNotifier {
         provider: aiProvider,
         apiKey: apiKey,
         system: 'You plan a single day for the user of a personal productivity app. Put cognitively hard, '
-            'goal-related work inside the peak-energy window, keep the post-lunch dip (14:00–16:00) for light work, '
+            'goal-related work inside the peak-energy window, keep the post-lunch dip (14:00-16:00) for light work, '
             'respect fixed times the user already set unless they clash, and never schedule in the past. '
-            'Use 24-hour HH:MM times. Summary: one or two plain sentences, no markdown.',
-        prompt: 'Now: ${_two(now.hour)}:${_two(now.minute)}. Wake ${p.wake}. Peak energy ${_two(p.peakStart)}:00–${_two(p.peakEnd)}:00. '
-            'Work hours ${_two(p.workStart)}:00–${_two(p.workEnd)}:00.\n'
+            'Use 24-hour HH:MM times. Summary: one or two plain sentences, no markdown. Never use em-dashes.',
+        prompt: 'Now: ${_two(now.hour)}:${_two(now.minute)}. Wake ${p.wake}. Peak energy ${_two(p.peakStart)}:00-${_two(p.peakEnd)}:00. '
+            'Work hours ${_two(p.workStart)}:00-${_two(p.workEnd)}:00.\n'
             'Calendar today: ${blocks.where((b) => b.day == todayIndex && b.kind == 'cal').map((b) => '${b.title} ${_two(b.start)}:00 for ${b.len}h').join('; ').ifEmpty('none')}.\n'
             'Open tasks (id | title | current time | goal):\n'
             '${open.map((t) => '${t.id} | ${t.title} | ${t.time} | ${t.goal}').join('\n')}',
@@ -584,7 +586,7 @@ class AppState extends ChangeNotifier {
     }
     if (planDraft == null || planDraft!.isEmpty) {
       planDraft = _heuristicPlan(open);
-      planSummary = 'Goal work first in your ${_two(p.peakStart)}–${_two(p.peakEnd)} peak, everything else after${aiReady ? '' : ' (offline plan — add an AI key for a smarter one)'}.';
+      planSummary = 'Goal work first in your ${_two(p.peakStart)}-${_two(p.peakEnd)} peak, everything else after${aiReady ? '' : ' (offline plan, add an AI key for a smarter one)'}.';
     }
     planLoading = false;
     notifyListeners();
@@ -652,7 +654,7 @@ class AppState extends ChangeNotifier {
     focusLen = 600;
     focusSec = 600;
     notifyListeners();
-    flash('Shrunk to 10 minutes — start whenever');
+    flash('Shrunk to 10 minutes. Start whenever.');
   }
 
   // ---------------------------------------------------------------- focus
@@ -730,14 +732,14 @@ class AppState extends ChangeNotifier {
   }
 
   void scheduleTenMinutes(Goal g) {
-    tasks.add(Task(title: '10 min on ${g.name}', time: '—', where: '—', goal: g.name));
+    tasks.add(Task(title: '10 min on ${g.name}', time: '-', where: '-', goal: g.name));
     _changed();
     flash('Added 10 minutes for ${g.name} to today');
   }
 
   String projectsForGoal(Goal g) {
     final names = projects.where((p) => p.goal == g.name).map((p) => p.name).toList();
-    return names.isEmpty ? '—' : names.join(', ');
+    return names.isEmpty ? '-' : names.join(', ');
   }
 
   void openProject(Project p) {
@@ -789,7 +791,7 @@ class AppState extends ChangeNotifier {
     _changed();
   }
 
-  /// Generates a milestone breakdown — via AI when configured, otherwise a
+  /// Generates a milestone breakdown, via AI when configured, otherwise a
   /// sensible offline template. Sets [breakdownError] when the AI call fails.
   String? breakdownError;
 
@@ -800,9 +802,9 @@ class AppState extends ChangeNotifier {
         provider: aiProvider,
         apiKey: apiKey,
         system: 'You turn a short project description into a realistic plan for one person working part-time. '
-            'Return 3–5 milestones in order. Each milestone gets 1–4 concrete first tasks with honest hour estimates '
-            '(integers). Milestone names are 1–3 words. Dates like "Oct 20" relative to today (${shortDate(DateTime.now())}), '
-            'or "TBD" if unclear.',
+            'Return 3-5 milestones in order. Each milestone gets 1-4 concrete first tasks with honest hour estimates '
+            '(integers). Milestone names are 1-3 words. Dates like "Oct 20" relative to today (${shortDate(DateTime.now())}), '
+            'or "TBD" if unclear. Never use em-dashes.',
         prompt: description,
         schema: const {
           'type': 'object',
@@ -885,7 +887,7 @@ class AppState extends ChangeNotifier {
     _changed();
   }
 
-  /// Urge counts per 2h bucket from 00–24, real log merged with baseline.
+  /// Urge counts per 2h bucket from 00-24, real log merged with baseline.
   List<int> urgeBuckets() {
     final base = [2, 1, 1, 2, 3, 2, 2, 3, 4, 6, 10, 7];
     final b = List<int>.from(base);
@@ -941,7 +943,7 @@ class AppState extends ChangeNotifier {
   void placeBlock(int day, int hour) {
     final id = selectedUnscheduled;
     if (id == null) return;
-    if (planLocked && day < todayIndex) return flash('Week is locked — unlock to edit');
+    if (planLocked && day < todayIndex) return flash('Week is locked. Unlock to edit.');
     final u = unscheduled.firstWhere((x) => x.id == id);
     final start = hour.clamp(plannerStartHour, plannerStartHour + plannerHours - u.len);
     blocks.add(Block(day: day, start: start, len: u.len, title: u.title, kind: 'new'));
@@ -952,7 +954,7 @@ class AppState extends ChangeNotifier {
   }
 
   void removeBlock(Block b) {
-    if (planLocked) return flash('Week is locked — unlock to edit');
+    if (planLocked) return flash('Week is locked. Unlock to edit.');
     blocks.remove(b);
     if (b.kind == 'new' || b.kind == 'plan') unscheduled.add(Unscheduled(title: b.title, len: b.len));
     _changed();
@@ -1017,16 +1019,16 @@ class AppState extends ChangeNotifier {
       ..writeln('Goals: ${goals.map((g) => '${g.name} ${g.pct}% (untouched ${g.days}d)').join('; ')}')
       ..writeln('Habit momentum: ${build.map((h) => '${h.name} ${h.momentum}').join(', ')}')
       ..writeln('Urges logged: ${reduce.map((h) => '${h.name} ${h.urges}').join(', ')}')
-      ..writeln('Contracts: ${contracts.map((c) => '${c.title} — ${c.status}').join('; ').ifEmpty('none')}')
-      ..writeln('Peak energy window: ${_two(profile.peakStart)}–${_two(profile.peakEnd)}');
+      ..writeln('Contracts: ${contracts.map((c) => '${c.title}, ${c.status}').join('; ').ifEmpty('none')}')
+      ..writeln('Peak energy window: ${_two(profile.peakStart)}-${_two(profile.peakEnd)}');
     try {
       final res = await _coach.json(
         provider: aiProvider,
         apiKey: apiKey,
         system: 'You write a weekly review for ${profile.name}, who wants to be "someone who ${profile.identity}". '
             'Be honest and specific, never preachy: name patterns (e.g. which times slip), use their real items. '
-            'Report: 3–5 plain sentences. Wins and slips: short phrases from the data. Adjustments: 3 concrete, '
-            'schedulable changes for next week. Next week: one sentence draft of the plan.',
+            'Report: 3-5 plain sentences. Wins and slips: short phrases from the data. Adjustments: 3 concrete, '
+            'schedulable changes for next week. Next week: one sentence draft of the plan. Never use em-dashes.',
         prompt: facts.toString(),
         schema: const {
           'type': 'object',
@@ -1156,7 +1158,7 @@ class AppState extends ChangeNotifier {
     if (coachContext['urges'] == true) {
       parts.add('Habits being reduced: ${reduce.map((h) => '${h.name} (${h.urges} urges this week)').join(', ')}.');
     }
-    parts.add('Peak energy ${profile.peakStart}:00–${profile.peakEnd}:00. Identity: "I am someone who ${profile.identity}".');
+    parts.add('Peak energy ${profile.peakStart}:00-${profile.peakEnd}:00. Identity: "I am someone who ${profile.identity}".');
     return parts.join(' ');
   }
 
@@ -1177,7 +1179,7 @@ class AppState extends ChangeNotifier {
         apiKey: apiKey,
         system: 'You are the AI coach inside "Trajectory", a personal life OS. Tone: $toneDesc. '
             'The user is ${profile.name}. Reply in under 120 words, plain text (no markdown), and always end '
-            'with one concrete next action.\n\nWhat you know about the user right now: ${_coachContextText()}',
+            'with one concrete next action. Never use em-dashes.\n\nWhat you know about the user right now: ${_coachContextText()}',
         messages: [for (final m in history) AiMsg(m.user, m.text)],
       );
     } catch (e) {
@@ -1193,7 +1195,7 @@ class AppState extends ChangeNotifier {
         'Gentle':
             "That sounds heavy. Let's make it smaller: pick the one task you've been avoiding and give it 10 minutes before lunch tomorrow. That's it.",
         'Direct':
-            'Your afternoons are where deep work goes to die — the blocks after 14:00 keep slipping. Move the hardest task to ${profile.peakStart.toString().padLeft(2, '0')}:30 tomorrow and protect it. Next action: accept that block now.',
+            'Your afternoons are where deep work goes to die, the blocks after 14:00 keep slipping. Move the hardest task to ${profile.peakStart.toString().padLeft(2, '0')}:30 tomorrow and protect it. Next action: accept that block now.',
         'Drill':
             'Afternoon blocks. Missed. Again. Pattern\'s obvious. Hardest task, ${profile.peakStart.toString().padLeft(2, '0')}:30 tomorrow, phone in the other room. Go accept the block.',
       }[tone]!;
@@ -1227,6 +1229,16 @@ class AppState extends ChangeNotifier {
   }
 
   void cycleTheme() => setTheme(ThemeName.values[(theme.index + 1) % ThemeName.values.length]);
+
+  void setGlass(bool v) {
+    glassOn = v;
+    _changed();
+  }
+
+  void toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    _changed();
+  }
 
   void setAutoLock(int m) {
     autoLockMinutes = m;
@@ -1281,7 +1293,7 @@ class AppState extends ChangeNotifier {
     b.writeln('_I am someone who ${profile.identity}._\n');
     b.writeln('## Vision goals');
     for (final g in goals) {
-      b.writeln('- **${g.name}** — ${g.pct}% · target ${g.target}${g.why.isEmpty ? '' : ' — “${g.why}”'}');
+      b.writeln('- **${g.name}**, ${g.pct}% · target ${g.target}${g.why.isEmpty ? '' : ', “${g.why}”'}');
     }
     b.writeln('\n## Projects');
     for (final p in projects) {
@@ -1299,7 +1311,7 @@ class AppState extends ChangeNotifier {
     }
     b.writeln('\n## Proof');
     for (final p in proof) {
-      b.writeln('- ${p.date} — ${p.title} (${p.goal})');
+      b.writeln('- ${p.date}, ${p.title} (${p.goal})');
     }
     return _storage.export('trajectory-export.md', b.toString());
   }
@@ -1345,6 +1357,8 @@ class AppState extends ChangeNotifier {
         'coachContext': coachContext,
         'focusMinutesLogged': focusMinutesLogged,
         'toursSeen': toursSeen.toList(),
+        'glassOn': glassOn,
+        'sidebarCollapsed': sidebarCollapsed,
       };
 
   void _fromJson(Map<String, dynamic> j) {
@@ -1390,6 +1404,8 @@ class AppState extends ChangeNotifier {
     coachContext = Map<String, bool>.from(j['coachContext'] ?? coachContext);
     focusMinutesLogged = (j['focusMinutesLogged'] as num? ?? 0).toDouble();
     toursSeen = {...(j['toursSeen'] as List? ?? []).cast<String>()};
+    glassOn = j['glassOn'] ?? true;
+    sidebarCollapsed = j['sidebarCollapsed'] ?? false;
   }
 }
 

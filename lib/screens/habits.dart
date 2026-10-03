@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../state/models.dart';
 import '../theme/tokens.dart';
 import '../shell/tour.dart';
+import '../widgets/charts.dart';
 import '../widgets/common.dart';
 
 class HabitsScreen extends StatelessWidget {
@@ -22,37 +23,52 @@ class HabitsScreen extends StatelessWidget {
       if (s.habitTab == 'build')
         TourTarget(id: 'habits.list', child: VStack(gap: 12, children: [
           for (final h in s.build) _BuildRow(h: h),
-          const Muted('No streaks. Momentum forgives a miss — one off day never resets you to zero.', size: 12.5),
+          const Muted('No streaks. Momentum forgives a miss, so one off day never resets you to zero.', size: 12.5),
         ]))
       else
         TwoCol(
           ratio: 1.4,
           left: VStack(gap: 12, children: [for (final h in s.reduce) _ReduceCard(h: h)]),
-          right: Panel(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-            child: VStack(gap: 12, children: [
-              Eyebrow('Trigger analysis', color: t.b, weight: FontWeight.w600),
-              Text.rich(TextSpan(style: t.body(size: 15, height: 1.45), children: [
-                const TextSpan(text: 'Urges spike '),
-                TextSpan(text: _peakWindow(s.urgeBuckets()), style: t.body(size: 15, weight: FontWeight.w700, height: 1.45)),
-                TextSpan(text: _triggerLine(s.reduce)),
-              ])),
-              Bars(
-                values: [for (final v in s.urgeBuckets()) (v * 10).toDouble()],
-                height: 70,
-                colorFor: (_, v) => v > 50 ? t.a : t.line,
+          right: Builder(builder: (_) {
+            final buckets = s.urgeBuckets();
+            final labels = [for (var i = 0; i < buckets.length; i++) _clock(8 + i * 1.5)];
+            var peak = 0;
+            for (var i = 1; i < buckets.length; i++) {
+              if (buckets[i] > buckets[peak]) peak = i;
+            }
+            return VStack(gap: 12, children: [
+              ChartCard(
+                title: 'When urges hit',
+                subtitle: 'Urges logged across all reduced habits, by time of day',
+                chart: LineChart(
+                  xLabels: labels,
+                  series: [Series('Urges', [for (final v in buckets) v.toDouble()], t.chartB, area: true)],
+                  bands: [Band(peak - .5 < 0 ? 0 : peak - .5, peak + .5 > buckets.length - 1 ? buckets.length - 1.0 : peak + .5, t.chartB.withValues(alpha: .08), 'Peak')],
+                  xLabelEvery: 3,
+                  height: 150,
+                ),
+                table: DataTableSpec(['Time', 'Urges'], [for (var i = 0; i < buckets.length; i++) [labels[i], '${buckets[i]}']]),
               ),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                for (final l in ['08', '12', '16', '20', '24']) Text(l, style: t.mono(size: 10.5, color: t.mute)),
-              ]),
-              Row(children: [
-                Btn('Block feeds after 22:00', kind: BtnKind.primary, size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 7), onTap: s.blockFeedsAfter22),
-              ]),
-            ]),
-          ),
+              Panel(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                child: VStack(gap: 10, children: [
+                  Text.rich(TextSpan(style: t.body(size: 14.5, height: 1.45), children: [
+                    const TextSpan(text: 'Urges spike '),
+                    TextSpan(text: _peakWindow(buckets), style: t.body(size: 14.5, weight: FontWeight.w700, height: 1.45)),
+                    TextSpan(text: _triggerLine(s.reduce)),
+                  ])),
+                  Row(children: [
+                    Btn('Block feeds after 22:00', kind: BtnKind.primary, size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 7), onTap: s.blockFeedsAfter22),
+                  ]),
+                ]),
+              ),
+            ]);
+          }),
         ),
     ]);
   }
+
+  String _clock(double h) => '${h.floor().toString().padLeft(2, '0')}:${h % 1 == 0 ? '00' : '30'}';
 
   String _peakWindow(List<int> b) {
     var best = 0;
@@ -61,7 +77,7 @@ class HabitsScreen extends StatelessWidget {
     }
     String hh(double h) => '${h.floor().toString().padLeft(2, '0')}:${h % 1 == 0 ? '00' : '30'}';
     final start = 8 + best * 1.5;
-    return '${hh(start)}–${hh(start + 1.5)}';
+    return '${hh(start)}-${hh(start + 1.5)}';
   }
 
   String _triggerLine(List<ReduceHabit> r) {

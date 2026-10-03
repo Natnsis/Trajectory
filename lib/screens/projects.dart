@@ -19,7 +19,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     if (last == 'today') return 0;
     final d = RegExp(r'^(\d+)d$').firstMatch(last);
     if (d != null) return int.parse(d.group(1)!);
-    return last == '—' ? 9999 : 500;
+    return last == '-' ? 9999 : 500;
   }
 
   @override
@@ -133,7 +133,7 @@ class _NewProject extends StatefulWidget {
 }
 
 class _NewProjectState extends State<_NewProject> {
-  final _desc = TextEditingController(text: 'A weekly newsletter on indie SaaS — 4 issues before I decide to keep going.');
+  final _desc = TextEditingController(text: 'A weekly newsletter on indie SaaS: 4 issues before I decide to keep going.');
   List<Milestone>? _ms;
   bool _loading = false;
   late String _goal = context.appRead.goalNames.firstOrNull ?? 'Inbox';
@@ -185,16 +185,16 @@ class _NewProjectState extends State<_NewProject> {
         const SizedBox(width: 20),
         Expanded(
           child: VStack(gap: 8, children: [
-            Eyebrow(s.aiReady ? 'AI breakdown' : 'Breakdown · offline template', color: t.b, weight: FontWeight.w600),
+            Strong(s.aiReady ? 'AI breakdown' : 'Breakdown (offline template)'),
             if (_loading) Text(s.aiReady ? 'breaking it down…' : 'thinking…', style: t.mono(size: 12, color: t.mute)),
             if (!_loading && _ms != null)
               for (final m in _ms!)
                 Text.rich(TextSpan(style: t.body(size: 13), children: [
                   TextSpan(text: m.name, style: t.body(size: 13, weight: FontWeight.w700)),
-                  TextSpan(text: ' — ${m.tasks.map((x) => '${x.title} · ${x.est}').join(', ')}', style: t.body(size: 13, color: t.mute)),
+                  TextSpan(text: ': ${m.tasks.map((x) => '${x.title} · ${x.est}').join(', ')}', style: t.body(size: 13, color: t.mute)),
                 ])),
             if (!_loading && s.breakdownError != null)
-              Text('${s.breakdownError} — showing a template instead.', style: t.mono(size: 11.5, color: t.a)),
+              Text('${s.breakdownError} Showing a template instead.', style: t.mono(size: 11.5, color: t.a)),
             const SizedBox(height: 12),
             Row(children: [
               Btn('Create project', kind: BtnKind.primary, size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),

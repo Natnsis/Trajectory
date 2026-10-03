@@ -49,6 +49,18 @@ void main() {
       s.toggleTray();
     }
 
+    // Collapsed sidebar and solid (glass off) surfaces render too.
+    s.toggleSidebar();
+    s.setGlass(false);
+    for (final scr in [Screen.today, Screen.ledger, Screen.planner]) {
+      s.go(scr);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull, reason: 'collapsed/solid $scr');
+    }
+    s.toggleSidebar();
+    s.setGlass(true);
+    s.endTour();
+
     // Tour: walks every step of Today's tour with the Next button, then closes.
     s.startTour(Screen.today);
     await tester.pump(const Duration(milliseconds: 600));

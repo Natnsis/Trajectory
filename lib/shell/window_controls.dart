@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../theme/tokens.dart';
+import '../theme/icons.dart';
 
 /// Frameless-window chrome: an invisible drag strip along the top edge, and
 /// minimize / maximize / close buttons that fade in when the pointer nears it.
@@ -63,13 +64,13 @@ class _Buttons extends StatelessWidget {
         boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: .25), blurRadius: 16, offset: const Offset(0, 6))],
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        _Btn(icon: Icons.remove_rounded, tip: 'Minimize', onTap: () => windowManager.minimize()),
+        _Btn(icon: Ph.minus, tip: 'Minimize', onTap: () => windowManager.minimize()),
         _Btn(
-          icon: Icons.crop_square_rounded,
+          icon: Ph.square,
           tip: 'Maximize',
           onTap: () async => await windowManager.isMaximized() ? windowManager.unmaximize() : windowManager.maximize(),
         ),
-        _Btn(icon: Icons.close_rounded, tip: 'Close', danger: true, onTap: () => windowManager.close()),
+        _Btn(icon: Ph.x, tip: 'Close', danger: true, onTap: () => windowManager.close()),
       ]),
     );
   }

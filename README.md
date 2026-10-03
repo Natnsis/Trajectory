@@ -16,6 +16,8 @@ On first launch you go through onboarding: create a PIN, save a recovery phrase,
 
 **Page tours:** each page shows a guided tour on first visit (spotlight + Back/Next; `→`/`Enter`, `←`, `Esc` work too). Replay with the **?** button in the sidebar, "Show tour for this page" in the palette, or Settings → Replay all page tours. Steps live in `lib/shell/tour_content.dart`; mark a widget with `TourTarget(id: …)` to make it a stop.
 
+**Look:** Mulish type, glass surfaces (backdrop blur, 1px inner border, top highlight, tinted shadow) over soft theme-colored ambient light, an icon rail plus collapsible panel sidebar, Phosphor icons. Settings → Appearance → Glass effects switches to solid surfaces (also automatic with the OS high-contrast setting).
+
 **Window:** frameless. Hover the top-right corner to reveal minimize / maximize / close; drag the window by its top edge.
 
 **Debug-only helpers:** `TRAJECTORY_SCREEN=today` and `TRAJECTORY_THEME=calm|editorial|telemetry` jump straight to a screen or theme. Release builds ignore them.
@@ -38,7 +40,8 @@ lib/
   shell/                 sidebar, tray widget, command palette, quick capture, friction gate, toast
   widgets/common.dart    design-system primitives (Panel, Btn, Ring, Bars, Segmented, …)
   screens/               one file per screen (16)
-assets/google_fonts/     bundled Geist, Geist Mono, Instrument Serif, Archivo Black, JetBrains Mono (OFL)
+assets/google_fonts/     bundled Mulish, Geist, Geist Mono, Instrument Serif, Archivo Black, JetBrains Mono (OFL)
+assets/fonts/            Phosphor Regular icon font (MIT); glyphs mapped in lib/theme/icons.dart
 ```
 
 ## What's real vs. simulated

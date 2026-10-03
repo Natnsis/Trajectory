@@ -35,7 +35,7 @@ class PlannerScreen extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         Muted(
-            'Green band = peak energy (${s.profile.peakStart.toString().padLeft(2, '0')}–${s.profile.peakEnd}) · red = post-lunch dip · dashed = missed · right-click a block for options',
+            'Green band: peak energy (${s.profile.peakStart.toString().padLeft(2, '0')}-${s.profile.peakEnd}). Red band: post-lunch dip. Dashed: missed. Right-click a block for options.',
             size: 12),
       ]),
     );
@@ -115,7 +115,7 @@ class _UnscheduledState extends State<_Unscheduled> {
             ),
           ]),
         ),
-        Text('Calendar · read-only · ${s.blocks.where((b) => b.kind == 'cal').length} events', style: t.body(size: 11.5, color: t.mute)),
+        Text('${s.blocks.where((b) => b.kind == 'cal').length} calendar events (read-only)', style: t.body(size: 11.5, color: t.mute)),
       ]),
     );
   }

@@ -48,9 +48,9 @@ class _FocusScreenState extends State<FocusScreen> {
                   child: SizedBox(
                     width: 520,
                     child: VStack(gap: 14, children: [
-                      Eyebrow('Session logged · ${s.focusMins} min'),
+                      Text('Logged ${s.focusMins} minutes', style: t.body(size: 13, color: t.mute)),
                       const Heading('What did you finish?', size: 30),
-                      Field(controller: _note, hint: 'Middleware tests for refresh flow — 6 passing', minLines: 4, maxLines: 6, size: 15, pad: const EdgeInsets.all(12), autofocus: true),
+                      Field(controller: _note, hint: 'Middleware tests for refresh flow, 6 passing', minLines: 4, maxLines: 6, size: 15, pad: const EdgeInsets.all(12), autofocus: true),
                       if (n.id != '_none') CheckRow(value: _markDone, label: 'Mark “${n.title}” done', muted: true, onChanged: (v) => setState(() => _markDone = v)),
                       Row(children: [
                         Btn('Log it · +1 vote for “I ${s.profile.identity.split(' ').first}”',
