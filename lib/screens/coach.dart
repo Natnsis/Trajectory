@@ -33,7 +33,7 @@ class _CoachScreenState extends State<CoachScreen> {
       });
     }
     final providerLine = switch (s.aiProvider) {
-      'Claude' => s.apiKey.isEmpty ? 'No key set, using the offline coach' : 'Claude · ${CoachService.claudeModel}',
+      'Claude' => s.apiKey.isEmpty ? 'Offline (no AI key)' : 'Claude · ${CoachService.claudeModel}',
       'Ollama' => 'Ollama (${CoachService.ollamaModel}, local)',
       _ => 'Offline coach',
     };
@@ -50,13 +50,29 @@ class _CoachScreenState extends State<CoachScreen> {
           ),
           Expanded(
             child: ListView(controller: _scroll, padding: const EdgeInsets.fromLTRB(36, 24, 36, 24), children: [
+              if (!s.aiReady)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Callout(
+                    color: t.aSoft,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    child: Row(children: [
+                      Expanded(
+                          child: Text(
+                              'No AI connected. Replies come from rules over your own data (your plan, habits, tasks), not a model, so they can\'t really talk it through with you.',
+                              style: t.body(size: 13))),
+                      const SizedBox(width: 12),
+                      Btn('Connect Claude', kind: BtnKind.primary, size: 12.5, pad: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), onTap: () => s.go(Screen.settings)),
+                    ]),
+                  ),
+                ),
               if (s.msgs.isEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 14),
                   child: Muted(
                       s.aiReady
                           ? 'Ask about your plan, a goal that\'s stuck, or a slump. The coach sees only the context you tick on the right.'
-                          : 'Add a Claude API key in Settings (or run Ollama locally) for real coaching. Without one, you get short offline suggestions based on your next task.',
+                          : 'Ask about your day, your week, a goal, or why things slip. The offline coach answers from your data.',
                       size: 13.5),
                 ),
               for (final m in s.msgs)
@@ -85,7 +101,11 @@ class _CoachScreenState extends State<CoachScreen> {
                   ),
                 ),
               if (s.thinking) Text('coach is reading your week…', style: t.mono(size: 12, color: t.mute)),
-              if (s.coachError != null) Text('${s.coachError} Used the offline coach instead.', style: t.mono(size: 11.5, color: t.a)),
+              if (s.coachError != null)
+                Row(children: [
+                  Expanded(child: Text('AI call failed: ${s.coachError} That reply came from the offline coach.', style: t.mono(size: 11.5, color: t.a))),
+                  Btn('Fix in Settings', kind: BtnKind.link, size: 12, onTap: () => s.go(Screen.settings)),
+                ]),
             ]),
           ),
           Padding(

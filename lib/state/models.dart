@@ -9,6 +9,39 @@ String newId() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
 String dayKey(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
+DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+const _monthAbbr = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/// Reads dates typed before the app had a date picker: ISO ("2026-12-05"),
+/// "Oct 20", "Dec 5, 2027", "Jun 2027" (end of that month). Null if unreadable.
+DateTime? parseLooseDate(String? v, [DateTime? now]) {
+  if (v == null || v.trim().isEmpty) return null;
+  final iso = DateTime.tryParse(v.trim());
+  if (iso != null) return dateOnly(iso);
+  final n = now ?? DateTime.now();
+  final md = RegExp(r'^([A-Za-z]{3})\w*\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?$').firstMatch(v.trim());
+  if (md != null) {
+    final mi = _monthAbbr.indexOf(md.group(1)!.toLowerCase());
+    if (mi < 0) return null;
+    final day = int.parse(md.group(2)!);
+    if (md.group(3) != null) return DateTime(int.parse(md.group(3)!), mi + 1, day);
+    final d = DateTime(n.year, mi + 1, day);
+    // "Oct 20" written in December means next October.
+    return d.isBefore(dateOnly(n).subtract(const Duration(days: 60))) ? DateTime(n.year + 1, mi + 1, day) : d;
+  }
+  final my = RegExp(r'^([A-Za-z]{3})\w*\.?\s+(\d{4})$').firstMatch(v.trim());
+  if (my != null) {
+    final mi = _monthAbbr.indexOf(my.group(1)!.toLowerCase());
+    if (mi < 0) return null;
+    return DateTime(int.parse(my.group(2)!), mi + 2, 0);
+  }
+  return null;
+}
+
+/// Whole days from today to [d] (negative when past).
+int daysUntil(DateTime d) => dateOnly(d).difference(dateOnly(DateTime.now())).inDays;
+
 class Profile {
   Profile({
     this.name = '',
@@ -102,21 +135,147 @@ class Task {
       doneAt: _date(j['doneAt']));
 }
 
+/// One rung on the way to a habit ("2 min a day", then "10 min", ...).
+class HabitStep {
+  HabitStep({String? id, required this.title, this.done = false}) : id = id ?? newId();
+  final String id;
+  String title;
+  bool done;
+  Map<String, dynamic> toJson() => {'id': id, 't': title, 'done': done};
+  factory HabitStep.fromJson(Map<String, dynamic> j) => HabitStep(id: j['id'], title: j['t'] ?? '', done: j['done'] ?? false);
+}
+
+/// Time actually put into a habit on a day.
+class HabitLog {
+  HabitLog(this.date, this.minutes);
+  final String date;
+  final int minutes;
+  Map<String, dynamic> toJson() => {'d': date, 'm': minutes};
+  factory HabitLog.fromJson(Map<String, dynamic> j) => HabitLog(j['d'], j['m'] ?? 0);
+}
+
 class BuildHabit {
-  BuildHabit({String? id, required this.name, this.target = '', this.stack = '', Set<String>? days})
-      : id = id ?? newId(),
-        days = days ?? {};
+  BuildHabit({
+    String? id,
+    required this.name,
+    this.target = '',
+    this.stack = '',
+    Set<String>? days,
+    List<HabitStep>? steps,
+    this.hoursPerWeek = 0,
+    Set<int>? weekdays,
+    this.time = '',
+    this.benefit = '',
+    this.cost = '',
+    List<HabitLog>? logs,
+    Set<String>? skipped,
+    DateTime? created,
+  })  : id = id ?? newId(),
+        days = days ?? {},
+        steps = steps ?? [],
+        weekdays = weekdays ?? {},
+        logs = logs ?? [],
+        skipped = skipped ?? {},
+        created = created ?? dateOnly(DateTime.now());
   final String id;
   String name, target, stack;
 
+  /// What adopting it gets you, and what skipping it costs. Your own words,
+  /// quoted back on Today, in nudges and on the Mirror.
+  String benefit, cost;
+
   /// Days (dayKey) the habit was done.
   final Set<String> days;
+  final List<HabitStep> steps;
 
+  /// The plan: hours a week, on these weekdays (0 = Mon; empty = every day),
+  /// starting at [time] ("HH:MM", optional).
+  double hoursPerWeek;
+  final Set<int> weekdays;
+  String time;
+  final List<HabitLog> logs;
+
+  /// Days you honestly said "not today" to a nudge.
+  final Set<String> skipped;
+  final DateTime created;
+
+  bool get hasPlan => hoursPerWeek > 0;
   bool doneOn(DateTime d) => days.contains(dayKey(d));
+  bool scheduledOn(DateTime d) => weekdays.isEmpty || weekdays.contains(d.weekday - 1);
+  int get sessionsPerWeek => weekdays.isEmpty ? 7 : weekdays.length;
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'target': target, 'stack': stack, 'days': days.toList()};
+  /// Planned minutes per scheduled day.
+  int get sessionMinutes => hasPlan ? (hoursPerWeek * 60 / sessionsPerWeek).round().clamp(5, 600) : 0;
+
+  int minutesOn(String k) => logs.where((l) => l.date == k).fold(0, (a, l) => a + l.minutes);
+
+  /// Minutes logged on days in [from, to] (inclusive, by day).
+  int minutesBetween(DateTime from, DateTime to) {
+    final a = dayKey(from), b = dayKey(to);
+    return logs.where((l) => l.date.compareTo(a) >= 0 && l.date.compareTo(b) <= 0).fold(0, (s, l) => s + l.minutes);
+  }
+
+  /// Minutes the plan asked for on days in [from, to], never before the habit existed.
+  int plannedBetween(DateTime from, DateTime to) {
+    if (!hasPlan) return 0;
+    var d = dateOnly(from).isBefore(created) ? created : dateOnly(from);
+    var total = 0;
+    while (!d.isAfter(dateOnly(to))) {
+      if (scheduledOn(d)) total += sessionMinutes;
+      d = DateTime(d.year, d.month, d.day + 1);
+    }
+    return total;
+  }
+
+  /// How much of today's planned session is done, 0-1 (1 when checked in without a plan).
+  double progressOn(DateTime d) {
+    final k = dayKey(d);
+    if (!hasPlan) return days.contains(k) ? 1 : 0;
+    return (minutesOn(k) / sessionMinutes).clamp(0, 1).toDouble();
+  }
+
+  int? get startMinute {
+    final m = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(time);
+    return m == null ? null : int.parse(m.group(1)!) * 60 + int.parse(m.group(2)!);
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'target': target,
+        'stack': stack,
+        'days': days.toList(),
+        'steps': steps.map((e) => e.toJson()).toList(),
+        'hpw': hoursPerWeek,
+        'wd': weekdays.toList(),
+        'time': time,
+        'benefit': benefit,
+        'cost': cost,
+        'logs': logs.map((e) => e.toJson()).toList(),
+        'skipped': skipped.toList(),
+        'created': created.toIso8601String(),
+      };
   factory BuildHabit.fromJson(Map<String, dynamic> j) => BuildHabit(
-      id: j['id'], name: j['name'], target: j['target'] ?? '', stack: j['stack'] ?? '', days: {...(j['days'] as List? ?? []).cast<String>()});
+        id: j['id'],
+        name: j['name'],
+        target: j['target'] ?? '',
+        stack: j['stack'] ?? '',
+        days: {...(j['days'] as List? ?? []).cast<String>()},
+        steps: (j['steps'] as List? ?? []).map((e) => HabitStep.fromJson(e)).toList(),
+        hoursPerWeek: (j['hpw'] as num? ?? 0).toDouble(),
+        weekdays: {...(j['wd'] as List? ?? []).cast<int>()},
+        time: j['time'] ?? '',
+        benefit: j['benefit'] ?? '',
+        cost: j['cost'] ?? '',
+        logs: (j['logs'] as List? ?? []).map((e) => HabitLog.fromJson(e)).toList(),
+        skipped: {...(j['skipped'] as List? ?? []).cast<String>()},
+        created: _date(j['created']) ?? _earliestDay(j['days']),
+      );
+
+  static DateTime? _earliestDay(Object? days) {
+    final l = (days as List? ?? []).cast<String>().toList()..sort();
+    return l.isEmpty ? null : DateTime.tryParse(l.first);
+  }
 }
 
 class ReduceHabit {
@@ -153,9 +312,16 @@ class UrgeLog {
 }
 
 class Goal {
-  Goal({String? id, required this.name, this.why = '', this.pct = 0, this.target = '', required this.lastTouched}) : id = id ?? newId();
+  Goal({String? id, required this.name, this.why = '', this.pct = 0, this.target = '', this.due, DateTime? created, required this.lastTouched})
+      : id = id ?? newId(),
+        created = created ?? dateOnly(lastTouched);
   final String id;
-  String name, why, target;
+  String name, why;
+
+  /// Legacy free-text target ("Jun 2027"); [due] is the real date.
+  String target;
+  DateTime? due;
+  final DateTime created;
   int pct;
   DateTime lastTouched;
 
@@ -164,32 +330,68 @@ class Goal {
   String get state => days >= 7 ? 'wilting' : days >= 3 ? 'growing' : 'thriving';
   double get vitality => switch (state) { 'wilting' => .35, 'growing' => .7, _ => 1.0 };
 
-  Map<String, dynamic> toJson() =>
-      {'id': id, 'name': name, 'why': why, 'pct': pct, 'target': target, 'lastTouched': lastTouched.toIso8601String()};
+  /// Where progress should be today if it moved evenly from creation to [due].
+  int? get expectedPct {
+    final d = due;
+    if (d == null) return null;
+    final total = dateOnly(d).difference(created).inDays;
+    if (total <= 0) return 100;
+    return (dateOnly(DateTime.now()).difference(created).inDays / total * 100).round().clamp(0, 100);
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'why': why,
+        'pct': pct,
+        'target': target,
+        'due': due?.toIso8601String(),
+        'created': created.toIso8601String(),
+        'lastTouched': lastTouched.toIso8601String()
+      };
   factory Goal.fromJson(Map<String, dynamic> j) => Goal(
-      id: j['id'], name: j['name'], why: j['why'] ?? '', pct: j['pct'] ?? 0, target: j['target'] ?? '', lastTouched: DateTime.parse(j['lastTouched']));
+      id: j['id'],
+      name: j['name'],
+      why: j['why'] ?? '',
+      pct: j['pct'] ?? 0,
+      target: j['target'] ?? '',
+      due: _date(j['due']) ?? parseLooseDate(j['target']),
+      created: _date(j['created']),
+      lastTouched: DateTime.parse(j['lastTouched']));
 }
 
 class ProjTask {
-  ProjTask({String? id, required this.title, required this.est, required this.when, this.done = false}) : id = id ?? newId();
+  ProjTask({String? id, required this.title, required this.est, required this.when, this.done = false, this.loggedMin = 0}) : id = id ?? newId();
   final String id;
   String title, est, when;
   bool done;
+
+  /// Focus minutes actually spent on this task.
+  int loggedMin;
   double get hours => double.tryParse(est.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0;
-  Map<String, dynamic> toJson() => {'id': id, 't': title, 'est': est, 'when': when, 'done': done};
+  Map<String, dynamic> toJson() => {'id': id, 't': title, 'est': est, 'when': when, 'done': done, 'lm': loggedMin};
   factory ProjTask.fromJson(Map<String, dynamic> j) =>
-      ProjTask(id: j['id'], title: j['t'], est: j['est'], when: j['when'], done: j['done'] ?? false);
+      ProjTask(id: j['id'], title: j['t'], est: j['est'], when: j['when'], done: j['done'] ?? false, loggedMin: j['lm'] ?? 0);
 }
 
 class Milestone {
-  Milestone({required this.name, required this.date, required this.tasks});
-  String name, date;
+  Milestone({required this.name, this.due, required this.tasks});
+  String name;
+  DateTime? due;
   final List<ProjTask> tasks;
   int get doneCount => tasks.where((t) => t.done).length;
-  Map<String, dynamic> toJson() => {'name': name, 'date': date, 'tasks': tasks.map((t) => t.toJson()).toList()};
+  String get dateLabel => due == null ? 'No date' : shortDay(due!);
+  Map<String, dynamic> toJson() => {'name': name, 'due': due?.toIso8601String(), 'tasks': tasks.map((t) => t.toJson()).toList()};
   factory Milestone.fromJson(Map<String, dynamic> j) => Milestone(
-      name: j['name'], date: j['date'], tasks: (j['tasks'] as List).map((e) => ProjTask.fromJson(e)).toList());
+      name: j['name'],
+      due: _date(j['due']) ?? parseLooseDate(j['date']),
+      tasks: (j['tasks'] as List).map((e) => ProjTask.fromJson(e)).toList());
 }
+
+const _mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/// "Oct 20", plus the year when it isn't this year.
+String shortDay(DateTime d) => '${_mon[d.month - 1]} ${d.day}${d.year == DateTime.now().year ? '' : ', ${d.year}'}';
 
 const projectStatuses = ['Idea', 'Active', 'Paused', 'Shipped'];
 
@@ -212,6 +414,19 @@ class Project {
 
   double get estimateHours => allTasks.fold(0, (a, t) => a + t.hours);
   double get doneHours => allTasks.where((t) => t.done).fold(0, (a, t) => a + t.hours);
+  double get remainingHours => allTasks.where((t) => !t.done).fold(0, (a, t) => a + t.hours);
+
+  /// Real focus time spent on the project's tasks.
+  double get loggedHours => allTasks.fold<int>(0, (a, t) => a + t.loggedMin) / 60;
+
+  /// Latest milestone date: when the project is meant to be done.
+  DateTime? get due {
+    final ds = milestones.map((m) => m.due).whereType<DateTime>().toList()..sort();
+    return ds.isEmpty ? null : ds.last;
+  }
+
+  /// Next unfinished milestone.
+  Milestone? get nextMilestone => milestones.where((m) => m.tasks.isEmpty || m.doneCount < m.tasks.length).firstOrNull;
 
   String get lastLabel {
     final d = DateTime.now().difference(lastActive).inDays;
@@ -241,16 +456,19 @@ class Project {
 
 /// Planner block. kind: done | missed | plan | new
 class Block {
-  Block({required this.day, required this.start, required this.len, required this.title, required this.kind, String? week})
-      : week = week ?? weekKey(DateTime.now());
+  Block({String? id, required this.day, required this.start, required this.len, required this.title, required this.kind, String? week})
+      : id = id ?? newId(),
+        week = week ?? weekKey(DateTime.now());
+  final String id;
   int day, start, len;
   String title, kind;
 
   /// Week the block belongs to (weekKey); the planner shows the current week.
   String week;
-  Map<String, dynamic> toJson() => {'d': day, 's': start, 'l': len, 't': title, 'k': kind, 'w': week};
+  int get end => start + len;
+  Map<String, dynamic> toJson() => {'id': id, 'd': day, 's': start, 'l': len, 't': title, 'k': kind, 'w': week};
   factory Block.fromJson(Map<String, dynamic> j) =>
-      Block(day: j['d'], start: j['s'], len: j['l'], title: j['t'], kind: j['k'], week: j['w']);
+      Block(id: j['id'], day: j['d'], start: j['s'], len: j['l'], title: j['t'], kind: j['k'], week: j['w']);
 }
 
 class Unscheduled {
@@ -287,20 +505,9 @@ class Contract {
         id: j['id'],
         title: j['t'],
         stake: j['stake'],
-        dueDate: _date(j['dueDate']) ?? _parseLegacyDue(j['due']) ?? DateTime.now().add(const Duration(days: 7)),
+        dueDate: _date(j['dueDate']) ?? parseLooseDate(j['due'] as String?) ?? DateTime.now().add(const Duration(days: 7)),
         flagged: j['flagged'] ?? j['status'] == 'AT RISK',
       );
-
-  /// v1 stored due dates as text like "Oct 31".
-  static DateTime? _parseLegacyDue(Object? v) {
-    if (v is! String) return null;
-    const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-    final m = RegExp(r'([A-Za-z]{3})\w*\s+(\d{1,2})').firstMatch(v);
-    if (m == null) return null;
-    final mi = months.indexOf(m.group(1)!.toLowerCase());
-    if (mi < 0) return null;
-    return DateTime(DateTime.now().year, mi + 1, int.parse(m.group(2)!));
-  }
 }
 
 class Proof {
@@ -312,12 +519,16 @@ class Proof {
 
 /// A completed focus session.
 class FocusSession {
-  FocusSession({required this.at, required this.minutes, required this.goal, required this.task});
+  FocusSession({required this.at, required this.minutes, required this.goal, required this.task, this.kind = 'task', this.ref = ''});
   final DateTime at;
   final int minutes;
   final String goal, task;
-  Map<String, dynamic> toJson() => {'at': at.toIso8601String(), 'm': minutes, 'goal': goal, 'task': task};
-  factory FocusSession.fromJson(Map<String, dynamic> j) => FocusSession(at: DateTime.parse(j['at']), minutes: j['m'], goal: j['goal'] ?? '', task: j['task'] ?? '');
+
+  /// What the time went into: task | habit | project | free, and its id.
+  final String kind, ref;
+  Map<String, dynamic> toJson() => {'at': at.toIso8601String(), 'm': minutes, 'goal': goal, 'task': task, 'kind': kind, 'ref': ref};
+  factory FocusSession.fromJson(Map<String, dynamic> j) => FocusSession(
+      at: DateTime.parse(j['at']), minutes: j['m'], goal: j['goal'] ?? '', task: j['task'] ?? '', kind: j['kind'] ?? 'task', ref: j['ref'] ?? '');
 }
 
 /// A friction-gate decision: opened the site anyway (Path A) or went back.

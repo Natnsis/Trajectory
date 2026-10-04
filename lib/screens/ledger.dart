@@ -68,6 +68,7 @@ class _LedgerScreenState extends State<LedgerScreen> {
           right: _PlannedVsDone(blocks: s.weekBlocks),
         ),
       ),
+      TwoCol(ratio: 1, left: _HabitPlan(from: from), right: _ByItem(sessions: sessions)),
       _BestHours(tasks: s.tasks, peakStart: s.profile.peakStart, peakEnd: s.profile.peakEnd),
       TourTarget(id: 'ledger.trend', child: _Trend(sessions: s.sessions)),
     ]);
@@ -209,4 +210,72 @@ class _Trend extends StatelessWidget {
       table: DataTableSpec(['Week of', 'Focused h'], [for (var i = 0; i < 12; i++) [labels[i], hours[i].toStringAsFixed(1)]]),
     );
   }
+}
+
+/// Habit time planned vs. logged in the selected range.
+class _HabitPlan extends StatelessWidget {
+  const _HabitPlan({required this.from});
+  final DateTime from;
+  @override
+  Widget build(BuildContext context) {
+    final s = context.app;
+    final t = context.t;
+    final now = DateTime.now();
+    final hs = s.build.where((h) => h.hasPlan).toList();
+    return Panel(
+      child: VStack(gap: 10, children: [
+        const Strong('Habits: planned vs. logged'),
+        if (hs.isEmpty)
+          const Muted('No habit has a time plan yet. Give one hours a week on the Habits page.', size: 13)
+        else
+          for (final h in hs)
+            Builder(builder: (_) {
+              final logged = h.minutesBetween(from, now), planned = h.plannedBetween(from, now);
+              return VStack(gap: 4, children: [
+                Row(children: [
+                  Expanded(child: Text(h.name, style: t.body(size: 13))),
+                  Text('${(logged / 60).toStringAsFixed(1)}h / ${(planned / 60).toStringAsFixed(1)}h',
+                      style: t.mono(size: 12, color: planned > 0 && logged < planned * .5 ? t.a : t.ink)),
+                ]),
+                Bar(pct: planned == 0 ? 0 : (logged / planned * 100).clamp(0, 100).toDouble(), height: 6),
+              ]);
+            }),
+      ]),
+    );
+  }
+}
+
+/// Focus minutes by what they were spent on.
+class _ByItem extends StatelessWidget {
+  const _ByItem({required this.sessions});
+  final List<FocusSession> sessions;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final by = <String, (String, int)>{};
+    for (final x in sessions) {
+      final k = '${x.kind}:${x.task}';
+      by[k] = (x.kind, (by[k]?.$2 ?? 0) + x.minutes);
+    }
+    final rows = by.entries.toList()..sort((a, b) => b.value.$2.compareTo(a.value.$2));
+    return Panel(
+      child: VStack(gap: 8, children: [
+        const Strong('Focus by item'),
+        if (rows.isEmpty)
+          const Muted('Each focus session is saved against what you picked: a habit, a task, or a project step. They add up here.', size: 13)
+        else
+          for (final e in rows.take(8))
+            Row(children: [
+              Chip2(switch (e.value.$1) { 'habit' => 'habit', 'project' => 'project', 'free' => 'free', _ => 'task' }),
+              const SizedBox(width: 8),
+              Expanded(child: Text(e.key.substring(e.key.indexOf(':') + 1).ifEmptyThen('Untitled'), overflow: TextOverflow.ellipsis, style: t.body(size: 13))),
+              Text('${(e.value.$2 / 60).toStringAsFixed(1)}h', style: t.mono(size: 12.5)),
+            ]),
+      ]),
+    );
+  }
+}
+
+extension on String {
+  String ifEmptyThen(String o) => isEmpty ? o : this;
 }

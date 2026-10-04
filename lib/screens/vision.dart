@@ -4,6 +4,7 @@ import '../state/models.dart';
 import '../theme/tokens.dart';
 import '../shell/tour.dart';
 import '../widgets/common.dart';
+import '../widgets/date_picker.dart';
 
 class VisionScreen extends StatelessWidget {
   const VisionScreen({super.key});
@@ -36,7 +37,7 @@ class VisionScreen extends StatelessWidget {
 Future<void> editGoal(BuildContext context, Goal? g) {
   final name = TextEditingController(text: g?.name);
   final why = TextEditingController(text: g?.why);
-  final target = TextEditingController(text: g?.target);
+  DateTime? due = g?.due;
   double pct = (g?.pct ?? 0).toDouble();
   return showTDialog(
     context,
@@ -47,8 +48,14 @@ Future<void> editGoal(BuildContext context, Goal? g) {
       return VStack(gap: 12, children: [
         Field(controller: name, hint: 'Goal', autofocus: true),
         Field(controller: why, hint: 'Why it matters'),
-        Field(controller: target, hint: 'Target (e.g. Jun 2027)', mono: true),
-        if (g != null)
+        Row(children: [
+          Text('Target date', style: t.body(size: 12, color: t.mute)),
+          const SizedBox(width: 12),
+          Expanded(child: DateField(value: due, hint: 'When should it be true?', first: DateTime.now(), onChanged: (v) => setState(() => due = v))),
+        ]),
+        if (g != null && s.goalPctFromProjects(g))
+          Muted('Progress comes from its projects\' tasks: ${s.goalPct(g)}%.', size: 12)
+        else if (g != null)
           Row(children: [
             Text('Progress', style: t.body(size: 12, color: t.mute)),
             Expanded(
@@ -68,9 +75,9 @@ Future<void> editGoal(BuildContext context, Goal? g) {
           Btn('Save', kind: BtnKind.primary, size: 13, onTap: () {
             if (name.text.trim().isEmpty) return;
             if (g == null) {
-              s.addGoal(name.text.trim(), why.text.trim(), target.text.trim());
+              s.addGoal(name.text.trim(), why.text.trim(), due);
             } else {
-              s.updateGoal(g, name: name.text.trim(), why: why.text.trim(), target: target.text.trim(), pct: pct.round());
+              s.updateGoal(g, name: name.text.trim(), why: why.text.trim(), due: due, clearDue: due == null, pct: pct.round());
             }
             Navigator.pop(ctx);
           }),
@@ -94,7 +101,7 @@ class _GoalCard extends StatelessWidget {
         Expanded(
           child: VStack(gap: 10, children: [
             Row(children: [
-              Ring(pct: g.pct.toDouble(), size: 48, thickness: 5, child: Text('${g.pct}%', style: t.mono(size: 11, weight: FontWeight.w600))),
+              Ring(pct: s.goalPct(g).toDouble(), size: 48, thickness: 5, child: Text('${s.goalPct(g)}%', style: t.mono(size: 11, weight: FontWeight.w600))),
               const SizedBox(width: 12),
               Expanded(
                 child: VStack(children: [
@@ -103,7 +110,19 @@ class _GoalCard extends StatelessWidget {
                 ]),
               ),
             ]),
-            if (g.target.isNotEmpty) _kv(t, 'Target', g.target, t.ink),
+            if (g.due != null) ...[
+              _kv(t, 'Target', '${shortDay(g.due!)} · ${daysUntil(g.due!) >= 0 ? '${daysUntil(g.due!)} days left' : '${-daysUntil(g.due!)} days overdue'}', daysUntil(g.due!) < 0 ? t.a : t.ink),
+              if (g.expectedPct != null)
+                Text(
+                  s.goalPct(g) >= g.expectedPct!
+                      ? 'On pace: ${s.goalPct(g)}%, ~${g.expectedPct}% expected by now.'
+                      : 'Behind pace: ${s.goalPct(g)}%, ~${g.expectedPct}% expected by now.',
+                  style: t.body(size: 12.5, color: s.goalPct(g) >= g.expectedPct! ? t.b : t.a),
+                ),
+            ] else if (g.target.isNotEmpty)
+              _kv(t, 'Target', '${g.target} (set a real date)', t.mute)
+            else
+              Text('No target date. Click to set one.', style: t.body(size: 12.5, color: t.mute)),
             if (g.why.isNotEmpty)
               Container(
                 padding: const EdgeInsets.only(left: 10),

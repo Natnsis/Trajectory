@@ -27,19 +27,18 @@ class ProofScreen extends StatelessWidget {
       ('30d', '30 habit check-ins', bestHabit >= 30),
       ('S', 'First project shipped', shipped >= 1),
       ('K', 'First promise kept', kept >= 1),
-      ('V', 'First week reviewed', s.reviewDraft != null),
+      ('L', 'First week locked in', s.lockedWeeks.isNotEmpty),
     ];
     final rewards = s.projects.where((p) => p.reward.isNotEmpty).toList();
     return ScreenPage(children: [
       PageHeader(eyebrow: 'Rewards & Proof Wall', title: 'Things you actually did', actions: [
         Btn('+ Proof', size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), onTap: () => _add(context)),
-        TourTarget(id: 'proof.badday', child: Btn('Bad-day mode: ${s.badDay ? 'on' : 'off'}', size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), onTap: s.toggleBadDay)),
       ]),
-      if (s.badDay && s.proof.isNotEmpty)
+      if (s.roughPatch && s.proof.isNotEmpty)
         FadeIn(
           child: Callout(
             child: VStack(gap: 4, children: [
-              const Strong('Momentum dipped. Here\'s who you\'ve already been:'),
+              Strong(s.hasMomentum ? 'Momentum is ${s.momentum}. Here\'s who you\'ve already been:' : 'Rough stretch. Here\'s who you\'ve already been:'),
               Muted('${s.proof.take(3).map((p) => p.title).join('. ')}.', size: 14),
             ]),
           ),
@@ -130,7 +129,7 @@ class ProofScreen extends StatelessWidget {
             isExpanded: true,
             dropdownColor: t.panel2,
             style: t.body(size: 13),
-            items: [for (final g in s.goalNames) DropdownMenuItem(value: g, child: Text(g))],
+            items: [for (final g in ['Inbox', ...s.goalNames]) DropdownMenuItem(value: g, child: Text(g))],
             onChanged: (v) => setState(() => goal = v!),
           ),
           Row(mainAxisAlignment: MainAxisAlignment.end, children: [

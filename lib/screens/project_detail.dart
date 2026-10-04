@@ -5,6 +5,7 @@ import '../state/models.dart';
 import '../theme/tokens.dart';
 import '../shell/tour.dart';
 import '../widgets/common.dart';
+import '../widgets/date_picker.dart';
 import '../theme/icons.dart';
 
 class ProjectDetailScreen extends StatelessWidget {
@@ -30,12 +31,13 @@ class ProjectDetailScreen extends StatelessWidget {
             ]),
           ),
           TourTarget(id: 'project.stats', child: HStack(gap: 28, children: [
-            if (p.estimateHours > 0) Stat(label: 'Estimated work', value: '${p.doneHours.round()}h', suffix: '/ ${p.estimateHours.round()}h done'),
-            Stat(label: 'Progress', value: '${p.computedPct}%', suffix: '${p.allTasks.where((x) => x.done).length}/${p.allTasks.length} tasks'),
+            Stat(label: 'Progress', value: '${p.computedPct}%', suffix: '${p.allTasks.where((x) => x.done).length}/${p.allTasks.length} steps'),
+            if (p.estimateHours > 0) Stat(label: 'Time', value: '${p.loggedHours.toStringAsFixed(1)}h', suffix: 'logged · ${p.remainingHours.round()}h of ${p.estimateHours.round()}h left'),
             _StatusMenu(p: p),
           ])),
         ]),
       ]),
+      _TimeLine(p: p),
       TwoCol(
         ratio: 1.6,
         left: TourTarget(id: 'project.milestones', child: Panel(
@@ -74,14 +76,17 @@ class ProjectDetailScreen extends StatelessWidget {
               ],
             ]),
           ),
+          Row(children: [Btn('Delete project', kind: BtnKind.outlineA, size: 12.5, pad: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), onTap: () => _delete(context, p))]),
           Panel(
             padding: const EdgeInsets.all(18),
             child: Text.rich(TextSpan(style: t.body(size: 12.5, color: t.mute), children: [
-              const TextSpan(text: 'Every task carries an implementation intention: '),
-              TextSpan(text: 'when', style: t.body(size: 12.5)),
-              const TextSpan(text: ' + '),
-              TextSpan(text: 'where', style: t.body(size: 12.5)),
-              const TextSpan(text: ', so it lands on the Planner automatically.'),
+              const TextSpan(text: 'Hover a step to '),
+              TextSpan(text: 'focus on it', style: t.body(size: 12.5)),
+              const TextSpan(text: ' (time is logged to it), add it to '),
+              TextSpan(text: 'today', style: t.body(size: 12.5)),
+              const TextSpan(text: ', or send it to the '),
+              TextSpan(text: 'planner', style: t.body(size: 12.5)),
+              const TextSpan(text: '. Click its hours to change the estimate.'),
             ])),
           ),
         ]),
@@ -106,24 +111,78 @@ class ProjectDetailScreen extends StatelessWidget {
     });
   }
 
-  void _addMilestone(BuildContext context, Project p) {
-    final name = TextEditingController(), date = TextEditingController();
-    showTDialog(context, title: 'New milestone', body: (ctx) {
+  void _delete(BuildContext context, Project p) {
+    showTDialog(context, title: 'Delete ${p.name}?', body: (ctx) {
       return VStack(gap: 12, children: [
-        Field(controller: name, hint: 'Name', autofocus: true),
-        Field(controller: date, hint: 'Date (e.g. Dec 5)', mono: true),
+        const Muted('Milestones, steps and notes go with it. Focus time already logged stays in the ledger.', size: 13),
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
           Btn('Cancel', size: 13, onTap: () => Navigator.pop(ctx)),
           const SizedBox(width: 8),
-          Btn('Add', kind: BtnKind.primary, size: 13, onTap: () {
-            if (name.text.trim().isEmpty) return;
-            p.milestones.add(Milestone(name: name.text.trim(), date: date.text.trim().isEmpty ? 'TBD' : date.text.trim(), tasks: []));
-            ctx.appRead.setNotes(p, p.notes); // persist
+          Btn('Delete', kind: BtnKind.softA, size: 13, onTap: () {
             Navigator.pop(ctx);
+            ctx.appRead.deleteProject(p);
           }),
         ]),
       ]);
     });
+  }
+
+  void _addMilestone(BuildContext context, Project p) {
+    final name = TextEditingController();
+    DateTime? due;
+    showTDialog(context, title: 'New milestone', body: (ctx) {
+      return StatefulBuilder(builder: (ctx, setState) {
+        return VStack(gap: 12, children: [
+          Field(controller: name, hint: 'Name', autofocus: true),
+          DateField(value: due, hint: 'Due date', first: DateTime.now(), onChanged: (v) => setState(() => due = v)),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            Btn('Cancel', size: 13, onTap: () => Navigator.pop(ctx)),
+            const SizedBox(width: 8),
+            Btn('Add', kind: BtnKind.primary, size: 13, onTap: () {
+              if (name.text.trim().isEmpty) return;
+              ctx.appRead.addMilestone(p, name.text, due);
+              Navigator.pop(ctx);
+            }),
+          ]),
+        ]);
+      });
+    });
+  }
+}
+
+/// Real time for the project: due date, pace from logged focus, and when
+/// the remaining estimate finishes at that pace.
+class _TimeLine extends StatelessWidget {
+  const _TimeLine({required this.p});
+  final Project p;
+  @override
+  Widget build(BuildContext context) {
+    final s = context.app;
+    final t = context.t;
+    final due = p.due;
+    final pace = s.projectPace(p);
+    final fc = s.projectForecast(p);
+    final next = p.nextMilestone;
+    final late = due != null && fc != null && fc.isAfter(due);
+    final parts = <InlineSpan>[
+      if (due == null)
+        const TextSpan(text: 'No due date yet. Give the milestones dates and the project gets one. ')
+      else
+        TextSpan(text: daysUntil(due) >= 0 ? 'Due ${shortDay(due)}, ${daysUntil(due)} days left. ' : 'Was due ${shortDay(due)}, ${-daysUntil(due)} days ago. '),
+      if (next != null && next.due != null) TextSpan(text: 'Next: ${next.name} by ${shortDay(next.due!)} (${relDays(next.due!)}). '),
+      if (p.remainingHours > 0)
+        TextSpan(
+          text: pace <= 0
+              ? 'No focus time logged in 4 weeks, so there\'s no pace to forecast from. '
+              : 'At your real pace (${pace.toStringAsFixed(1)}h/week) the ${p.remainingHours.round()}h left take until ${shortDay(fc!)}. ',
+        ),
+      if (late) TextSpan(text: 'That\'s ${fc.difference(due).inDays} days late.', style: t.body(size: 13.5, weight: FontWeight.w600, color: t.a)),
+    ];
+    return Callout(
+      color: late ? t.aSoft : null,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Text.rich(TextSpan(style: t.body(size: 13.5, height: 1.45), children: parts)),
+    );
   }
 }
 
@@ -157,6 +216,35 @@ class _MilestoneView extends StatefulWidget {
 
 class _MilestoneViewState extends State<_MilestoneView> {
   final _add = TextEditingController();
+
+  void _editHours(BuildContext context, ProjTask task) {
+    final title = TextEditingController(text: task.title);
+    var hours = task.hours.round().clamp(1, 200);
+    showTDialog(context, title: 'Edit step', width: 400, body: (ctx) {
+      return StatefulBuilder(builder: (ctx, setState) {
+        final t = ctx.t;
+        return VStack(gap: 12, children: [
+          Field(controller: title, autofocus: true),
+          Row(children: [
+            Text('Estimate', style: t.body(size: 12.5, color: t.mute)),
+            const SizedBox(width: 10),
+            Btn('−', size: 14, pad: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), onTap: hours <= 1 ? null : () => setState(() => hours--)),
+            SizedBox(width: 56, child: Text('${hours}h', textAlign: TextAlign.center, style: t.mono(size: 15, weight: FontWeight.w600))),
+            Btn('+', size: 14, pad: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), onTap: () => setState(() => hours++)),
+          ]),
+          if (task.loggedMin > 0) Muted('${(task.loggedMin / 60).toStringAsFixed(1)}h logged so far.', size: 12),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            Btn('Cancel', size: 13, onTap: () => Navigator.pop(ctx)),
+            const SizedBox(width: 8),
+            Btn('Save', kind: BtnKind.primary, size: 13, onTap: () {
+              ctx.appRead.updateProjTask(widget.p, task, title: title.text, hours: hours);
+              Navigator.pop(ctx);
+            }),
+          ]),
+        ]);
+      });
+    });
+  }
   @override
   Widget build(BuildContext context) {
     final s = context.app;
@@ -180,9 +268,23 @@ class _MilestoneViewState extends State<_MilestoneView> {
         const SizedBox(width: 12),
         Expanded(
           child: VStack(gap: 2, children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Strong(m.name),
-              Text('${m.date} · ${m.doneCount}/${m.tasks.length}', style: t.mono(size: 12, color: t.mute)),
+            Row(children: [
+              Expanded(child: Strong(m.name)),
+              Tap(
+                onTap: () async {
+                  final r = await pickDate(context, initial: m.due, allowClear: true, first: DateTime.now().subtract(const Duration(days: 365)), title: 'When is ${m.name} due?');
+                  if (r != null) s.updateMilestone(widget.p, m, due: r.date, clearDue: r.date == null);
+                },
+                child: Text(
+                  '${m.due == null ? 'set date' : m.dateLabel} · ${m.doneCount}/${m.tasks.length}',
+                  style: t.mono(size: 12, color: m.due != null && daysUntil(m.due!) < 0 && m.doneCount < m.tasks.length ? t.a : t.mute)
+                      .copyWith(decoration: TextDecoration.underline, decorationColor: t.line),
+                ),
+              ),
+              Tooltip(
+                message: 'Remove milestone',
+                child: Tap(onTap: () => s.removeMilestone(widget.p, m), child: Padding(padding: const EdgeInsets.only(left: 6), child: Icon(Ph.x, size: 13, color: t.mute))),
+              ),
             ]),
             for (final task in m.tasks)
               Tap(
@@ -193,6 +295,12 @@ class _MilestoneViewState extends State<_MilestoneView> {
                     Expanded(child: child),
                     if (hover && !task.done) ...[
                       Tooltip(
+                        message: 'Focus on this',
+                        child: Tap(
+                            onTap: () => s.startFocus(FocusTarget('project', '${widget.p.id}/${task.id}', task.title, '${widget.p.name} · ${task.est}', widget.p.goal, 0)),
+                            child: Padding(padding: const EdgeInsets.all(5), child: Icon(Ph.timer, size: 15, color: t.mute))),
+                      ),
+                      Tooltip(
                         message: 'Add to today',
                         child: Tap(onTap: () => s.projTaskToToday(widget.p, task), child: Padding(padding: const EdgeInsets.all(5), child: Icon(Ph.sunHorizon, size: 15, color: t.mute))),
                       ),
@@ -201,6 +309,11 @@ class _MilestoneViewState extends State<_MilestoneView> {
                         child: Tap(onTap: () => s.projTaskToPlanner(widget.p, task), child: Padding(padding: const EdgeInsets.all(5), child: Icon(Ph.calendarPlus, size: 15, color: t.mute))),
                       ),
                     ],
+                    if (hover)
+                      Tooltip(
+                        message: 'Delete step',
+                        child: Tap(onTap: () => s.removeProjTask(widget.p, task), child: Padding(padding: const EdgeInsets.all(5), child: Icon(Ph.x, size: 14, color: t.mute))),
+                      ),
                   ]),
                 ),
                 child: Row(children: [
@@ -215,8 +328,10 @@ class _MilestoneViewState extends State<_MilestoneView> {
                         ]),
                       ),
                     ),
-                    Text(task.est, style: t.mono(size: 11.5, color: t.mute)),
+                    if (task.loggedMin > 0) Text('${(task.loggedMin / 60).toStringAsFixed(1)}h / ', style: t.mono(size: 11.5, color: t.b)),
+                    Tap(onTap: () => _editHours(context, task), child: Text(task.est, style: t.mono(size: 11.5, color: t.mute).copyWith(decoration: TextDecoration.underline, decorationColor: t.line))),
                     const SizedBox(width: 6),
+
                   ]),
               ),
             Divided(
@@ -224,7 +339,7 @@ class _MilestoneViewState extends State<_MilestoneView> {
               child: BareField(
                 controller: _add,
                 size: 13,
-                hint: '+ Add task',
+                hint: '+ Add step (e.g. "Write intro 2h")',
                 onSubmitted: (v) {
                   s.addProjTask(widget.p, m, v);
                   _add.clear();

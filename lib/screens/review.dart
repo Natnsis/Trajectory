@@ -4,6 +4,7 @@ import '../theme/tokens.dart';
 import '../shell/tour.dart';
 import '../widgets/common.dart';
 import '../state/models.dart';
+import '../state/app_state.dart';
 
 class ReviewScreen extends StatelessWidget {
   const ReviewScreen({super.key});
@@ -259,18 +260,15 @@ class ReviewScreen extends StatelessWidget {
                                 ),
                               ),
                           ],
-                          Field(
-                            hint: 'Anything else that got in the way?',
-                            minLines: 3,
-                            maxLines: 4,
-                            fill: t.bg,
-                          ),
+                          _Note(initial: s.reviewNote, onChanged: s.setReviewNote),
                         ],
                       ),
                       3 => VStack(
                         gap: 10,
                         children: [
                           const Strong('Suggested adjustments', size: 16),
+                          const Muted('Accepted ones become your rules for next week: shown on Today and the Planner, and the coach holds you to them.', size: 12.5),
+                          if (adj.isEmpty) const Muted('Nothing to adjust from this week\'s data yet.', size: 13),
                           for (final (id, text) in adj)
                             Divided(
                               padding: const EdgeInsets.symmetric(vertical: 10),
@@ -290,7 +288,7 @@ class ReviewScreen extends StatelessWidget {
                                     s.adjustments[id] == 'yes',
                                     t.b,
                                     t.bInk,
-                                    () => s.setAdjustment(id, 'yes'),
+                                    () => s.setAdjustment(id, 'yes', text),
                                   ),
                                   const SizedBox(width: 10),
                                   _choice(
@@ -299,7 +297,7 @@ class ReviewScreen extends StatelessWidget {
                                     s.adjustments[id] == 'no',
                                     t.aSoft,
                                     t.ink,
-                                    () => s.setAdjustment(id, 'no'),
+                                    () => s.setAdjustment(id, 'no', text),
                                   ),
                                 ],
                               ),
@@ -319,6 +317,10 @@ class ReviewScreen extends StatelessWidget {
                               '${s.unscheduled.isNotEmpty ? ', and schedule the ${s.unscheduled.length} unscheduled item(s) on the Planner' : ''}. Use "Write it with AI" for a detailed plan.',
                               size: 14,
                             ),
+                          if (s.rulesNextWeek.isNotEmpty) ...[
+                            const Strong('Your rules for next week'),
+                            for (final r in s.rulesNextWeek) Text('· $r', style: t.body(size: 13.5)),
+                          ],
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 14,
@@ -329,15 +331,19 @@ class ReviewScreen extends StatelessWidget {
                               borderRadius: BorderRadius.circular(t.rs),
                             ),
                             child: Text(
-                              'Locking pre-commits the week. Mid-week edits will need a reason.',
+                              'Put next week\'s blocks on the Planner, then lock it. A locked week can\'t be rearranged, only done or missed.',
                               style: t.body(size: 13),
                             ),
                           ),
                           Row(
                             children: [
+                              Btn('Plan next week', kind: BtnKind.primary, onTap: () {
+                                s.go(Screen.planner);
+                                s.shiftPlannerWeek(1 - s.plannerOffset);
+                              }),
+                              const SizedBox(width: 8),
                               Btn(
                                 s.nextWeekLocked ? 'Next week is locked' : 'Lock next week',
-                                kind: BtnKind.primary,
                                 onTap: s.nextWeekLocked ? null : s.lockFromReview,
                               ),
                             ],
@@ -412,4 +418,25 @@ class ReviewScreen extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _Note extends StatefulWidget {
+  const _Note({required this.initial, required this.onChanged});
+  final String initial;
+  final ValueChanged<String> onChanged;
+  @override
+  State<_Note> createState() => _NoteState();
+}
+
+class _NoteState extends State<_Note> {
+  late final _c = TextEditingController(text: widget.initial);
+  @override
+  Widget build(BuildContext context) => Field(
+        controller: _c,
+        hint: 'Anything else that got in the way? The AI review reads this.',
+        minLines: 3,
+        maxLines: 4,
+        fill: context.t.bg,
+        onChanged: widget.onChanged,
+      );
 }

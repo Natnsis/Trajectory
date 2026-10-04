@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../shell/tour.dart';
 import '../widgets/common.dart';
+import '../widgets/date_picker.dart';
 import '../theme/tokens.dart';
 import '../theme/icons.dart';
 import '../state/app_state.dart';
@@ -16,24 +17,6 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
   final _c = TextEditingController();
   DateTime _due = DateTime.now().add(const Duration(days: 7));
 
-  Future<void> _pickDue() async {
-    final t = context.t;
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _due,
-      firstDate: now,
-      lastDate: now.add(const Duration(days: 730)),
-      builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(
-          colorScheme: ColorScheme.fromSeed(seedColor: t.b, brightness: t.dark ? Brightness.dark : Brightness.light, primary: t.b, surface: t.panel2),
-        ),
-        child: child!,
-      ),
-    );
-    if (picked != null) setState(() => _due = picked);
-  }
-
   @override
   Widget build(BuildContext context) {
     final s = context.app;
@@ -41,9 +24,11 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
     final kept = s.contractHistory.where((k) => k).length;
     final partner = s.profile.partnerName.isEmpty ? 'your partner' : s.profile.partnerName;
     final hint = {
-      'Charity': r'$100 goes to a charity you pick if you miss the deadline.',
-      'Public post': 'A pre-written post goes out on your account if you miss.',
-      'Partner': '$partner gets a message the moment the deadline passes.',
+      'Charity': r'You pledge $100 to charity if you miss. Nothing is charged for you: mark it broken and a donation page opens. Your record keeps score.',
+      'Public post': 'Mark it broken and a post saying you missed opens in your browser, already written. You press Post.',
+      'Partner': s.profile.partnerEmail.isEmpty
+          ? 'Add an accountability partner in Settings to use this stake.'
+          : 'Mark it broken and an email to $partner opens, saying so. You press Send.',
     }[s.stake]!;
     return ScreenPage(children: [
       const VStack(gap: 4, children: [Eyebrow('Commitments'), Heading('Pre-commit, so willpower doesn\'t have to')]),
@@ -118,7 +103,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
               Row(children: [
                 Text('Due', style: t.body(size: 12, color: t.mute)),
                 const SizedBox(width: 10),
-                Expanded(child: Btn(shortDate(_due), size: 13, onTap: _pickDue)),
+                Expanded(child: DateField(value: _due, allowClear: false, first: DateTime.now(), last: DateTime.now().add(const Duration(days: 730)), title: 'Due when?', onChanged: (v) => setState(() => _due = v ?? _due))),
               ]),
               Pills(square: true, expand: true, options: const [('Charity', 'Charity'), ('Public post', 'Public post'), ('Partner', 'Partner')], value: s.stake, onChanged: s.setStake),
               Muted(hint, size: 12),

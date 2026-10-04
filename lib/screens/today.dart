@@ -6,6 +6,8 @@ import '../state/models.dart';
 import '../theme/tokens.dart';
 import '../shell/tour.dart';
 import '../widgets/common.dart';
+import '../widgets/date_picker.dart';
+import 'habits.dart' show logHabitDialog;
 import '../theme/icons.dart';
 
 class TodayScreen extends StatefulWidget {
@@ -93,6 +95,16 @@ class _TodayScreenState extends State<TodayScreen> {
             Btn('Not now', kind: BtnKind.text, size: 12.5, onTap: s.dismissMissedNotice),
           ]),
         ),
+      for (final nd in s.nudges) _NudgeCard(n: nd),
+      if (s.rulesThisWeek.isNotEmpty)
+        Callout(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Strong('This week\'s rules', size: 13, color: t.b),
+            const SizedBox(width: 14),
+            Expanded(child: Text(s.rulesThisWeek.join('  ·  '), style: t.body(size: 13))),
+          ]),
+        ),
       if (!s.planAcceptedToday && s.todayTasks.any((t) => !t.done)) const TourTarget(id: 'today.plan', child: _PlanCard()),
       TwoCol(
         left: VStack(gap: 16, children: [
@@ -104,7 +116,7 @@ class _TodayScreenState extends State<TodayScreen> {
               if (n.id != '_none') Text('Serves → ${n.goal}', style: t.body(size: 13, color: t.b)),
               const SizedBox(height: 6),
               Row(children: [
-                Btn('Start Focus · ${s.focusLen ~/ 60} min', kind: BtnKind.primary, onTap: n.id == '_none' ? null : s.startFocus),
+                Btn('Start Focus', kind: BtnKind.primary, onTap: () => s.startFocus()),
                 const SizedBox(width: 8),
                 Btn('Just 10 minutes', onTap: n.id == '_none' ? null : s.shrinkNext),
               ]),
@@ -151,11 +163,18 @@ class _TodayScreenState extends State<TodayScreen> {
                 Btn('All habits →', kind: BtnKind.text, size: 12, onTap: () => s.go(Screen.habits)),
               ]),
               if (s.habitCount == 0)
-                const Muted('No habits yet. Add one on the Habits page and it shows up here for a daily check-in.', size: 12.5)
+                const Muted('No habits due today. Habits you plan on the Habits page show up here on their days.', size: 12.5)
               else
                 Wrap(spacing: 8, runSpacing: 12, children: [
-                  for (final h in s.build)
-                    _HabitDot(name: h.name, meta: h.target, done: h.doneOn(DateTime.now()), bad: false, onTap: () => s.toggleHabit(h)),
+                  for (final h in s.habitsDueToday)
+                    _HabitDot(
+                      name: h.name,
+                      meta: h.hasPlan ? '${h.minutesOn(s.todayKey)}/${h.sessionMinutes}m' : h.target,
+                      done: h.progressOn(DateTime.now()) >= 1,
+                      bad: false,
+                      // With a plan, tapping asks how long you actually did it.
+                      onTap: () => h.hasPlan && h.progressOn(DateTime.now()) < 1 ? logHabitDialog(context, h) : s.toggleHabit(h),
+                    ),
                   for (final h in s.reduce)
                     _HabitDot(name: 'No ${h.name.toLowerCase()}', meta: 'held today', done: h.heldOn(DateTime.now()), bad: true, onTap: () => s.toggleHeld(h)),
                 ]),
@@ -183,6 +202,11 @@ class _TodayScreenState extends State<TodayScreen> {
     final urges = s.reduce.fold<int>(0, (a, h) => a + h.urgesThisWeek);
     final parts = <String>[
       if (planned > 0) 'You completed ${done}h of the ${planned}h you planned.',
+      for (final h in s.build.where((h) => h.hasPlan))
+        () {
+          final (l, p) = s.habitWeek(h);
+          return '${h.name}: ${(l / 60).toStringAsFixed(1)}h of ${(p / 60).toStringAsFixed(1)}h.';
+        }(),
       if (focus > 0) '${(focus / 60).toStringAsFixed(1)}h of focus logged.',
       if (urges > 0) '$urges urges logged.',
     ];
@@ -393,6 +417,7 @@ void editTask(BuildContext context, Task task) {
   final where = TextEditingController(text: task.where == '-' ? '' : task.where);
   var goal = task.goal;
   var date = DateTime.tryParse(task.date) ?? DateTime.now();
+  if (date.isBefore(dateOnly(DateTime.now()))) date = dateOnly(DateTime.now());
   String err = '';
   showTDialog(context, title: 'Edit task', width: 460, body: (ctx) {
     return StatefulBuilder(builder: (ctx, setState) {
@@ -402,18 +427,14 @@ void editTask(BuildContext context, Task task) {
       return VStack(gap: 12, children: [
         Field(controller: title, hint: 'Task', autofocus: true),
         Row(children: [
-          Expanded(child: Field(controller: time, hint: 'Time (HH:MM, optional)', mono: true)),
+          TimeField(value: time.text, hint: 'Time (optional)', onChanged: (v) => setState(() => time.text = v)),
           const SizedBox(width: 8),
           Expanded(child: Field(controller: where, hint: 'Where (optional)')),
         ]),
         Row(children: [
           Text('Day', style: t.body(size: 12.5, color: t.mute)),
           const SizedBox(width: 10),
-          Pills(
-            options: const [(0, 'Today'), (1, 'Tomorrow')],
-            value: date.difference(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)).inDays.clamp(-1, 2) == 1 ? 1 : 0,
-            onChanged: (v) => setState(() => date = DateTime.now().add(Duration(days: v))),
-          ),
+          DateField(value: date, allowClear: false, title: 'Which day?', onChanged: (v) => setState(() => date = v ?? date)),
           const Spacer(),
           Text('Goal', style: t.body(size: 12.5, color: t.mute)),
           const SizedBox(width: 8),
@@ -451,3 +472,52 @@ void editTask(BuildContext context, Task task) {
   });
 }
 
+
+/// "You planned this. Here's where it stands. Here's what you said skipping costs."
+class _NudgeCard extends StatelessWidget {
+  const _NudgeCard({required this.n});
+  final Nudge n;
+  @override
+  Widget build(BuildContext context) {
+    final s = context.app;
+    final t = context.t;
+    const pad = EdgeInsets.symmetric(horizontal: 12, vertical: 6);
+    final h = n.kind == 'habit' ? s.build.where((x) => x.id == n.ref).firstOrNull : null;
+    final b = n.kind == 'block' ? s.blocks.where((x) => x.id == n.ref).firstOrNull : null;
+    return Callout(
+      color: t.aSoft,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: VStack(gap: 8, children: [
+        Row(children: [
+          Strong('Reality check', size: 13, color: t.a),
+          const SizedBox(width: 10),
+          Expanded(child: Text(n.what, style: t.body(size: 14, weight: FontWeight.w600))),
+        ]),
+        Text(n.status, style: t.body(size: 13)),
+        if (n.cost.isNotEmpty)
+          Text.rich(TextSpan(style: t.body(size: 13, height: 1.4), children: [
+            TextSpan(text: 'You said skipping it means: ', style: t.body(size: 13, color: t.mute)),
+            TextSpan(text: '“${n.cost}”', style: t.body(size: 13).copyWith(fontStyle: FontStyle.italic)),
+          ])),
+        if (h != null && h.benefit.isNotEmpty) Text('Doing it: ${h.benefit}', style: t.body(size: 12.5, color: t.b)),
+        Row(children: [
+          if (h != null) ...[
+            Btn('Start now · ${h.sessionMinutes - h.minutesOn(s.todayKey)} min', kind: BtnKind.primary, size: 12.5, pad: pad,
+                onTap: () => s.startFocus(FocusTarget('habit', h.id, h.name, 'Habit', 'Inbox', h.sessionMinutes - h.minutesOn(s.todayKey)))),
+            const SizedBox(width: 8),
+            Btn('I did it, log time', size: 12.5, pad: pad, onTap: () => logHabitDialog(context, h)),
+            const SizedBox(width: 8),
+            Btn('Not today', kind: BtnKind.text, size: 12.5, onTap: () => s.skipHabitToday(h)),
+          ],
+          if (b != null) ...[
+            Btn('Start it now', kind: BtnKind.primary, size: 12.5, pad: pad, onTap: () => s.startFocus()),
+            const SizedBox(width: 8),
+            Btn('Done', size: 12.5, pad: pad, onTap: () => s.resolveBlockNudge(b.id, true)),
+            const SizedBox(width: 8),
+            Btn('Missed it', kind: BtnKind.text, size: 12.5, onTap: () => s.resolveBlockNudge(b.id, false)),
+          ],
+        ]),
+      ]),
+    );
+  }
+}

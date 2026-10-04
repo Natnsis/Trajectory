@@ -17,6 +17,7 @@ class SettingsScreen extends StatelessWidget {
     final t = context.t;
     return ScreenPage(maxWidth: 1100, children: [
       const Heading('Settings'),
+      const _AiPanel(),
       TourTarget(id: 'settings.grid', child: Grid(columns: 2, children: [
         _Section('Profile', [
           _Row('Name', s.profile.name, onTap: () => _text(context, 'Name', s.profile.name, (v) => s.setProfile(name: v))),
@@ -28,20 +29,6 @@ class SettingsScreen extends StatelessWidget {
               onTap: () => _pick(context, 'Auto-lock', ['5', '10', '30', 'Never'], (v) => s.setAutoLock(v == 'Never' ? 0 : int.parse(v)))),
           _Row('Recovery phrase', 'Regenerate (PIN required)', onTap: () => _regenPhrase(context)),
         ]),
-        _Section('AI provider', [
-          _Row('Provider', s.profile.aiProvider, onTap: () => _pick(context, 'Provider', ['Claude', 'Ollama', 'None'], s.setProvider)),
-          _Row('Model', s.profile.aiProvider == 'Claude' ? 'claude-opus-5-5' : s.profile.aiProvider == 'Ollama' ? 'llama3.2' : '-'),
-          _Row('API key', s.apiKey.isEmpty ? 'Not set' : '••••${s.apiKey.substring(s.apiKey.length - 4)}',
-              onTap: () => _text(context, 'Claude API key', '', (v) => s.setApiKey(v),
-                  obscure: true,
-                  hint: 'sk-ant-… (blank to remove)',
-                  validate: (v) => v.isEmpty || looksLikeClaudeKey(v)
-                      ? null
-                      : v.split(RegExp(r'\s+')).length >= 6
-                          ? 'That looks like your recovery phrase, not an API key.'
-                          : 'Anthropic API keys start with "sk-ant-".')),
-          _Row('Local-only mode', s.localOnly ? 'On' : 'Off', onTap: () => s.setLocalOnly(!s.localOnly)),
-        ]),
         _Section('Appearance', [
           _Row('Theme', s.theme.label, onTap: () => _pick(context, 'Theme', [for (final n in ThemeName.values) n.label], (v) => s.setTheme(ThemeName.values.firstWhere((n) => n.label == v)))),
           _Row('Decay metaphor', s.decayMetaphor, onTap: () => _pick(context, 'Decay metaphor', ['Plant', 'Flame'], s.setDecay)),
@@ -49,17 +36,9 @@ class SettingsScreen extends StatelessWidget {
         ]),
         _Section('Notifications', [
           _Row('Desktop notifications', s.notificationsOn ? 'On' : 'Off', onTap: () => s.setNotifications(!s.notificationsOn)),
-          _Row('What you get', 'Task times, 5 min before blocks, contracts due tomorrow, focus done'),
+          _Row('What you get', 'Task times, blocks (5 min before, and if they slip), habit times and "you planned this" nudges, contracts due tomorrow, focus done'),
           _Row('Send a test', 'Test now', onTap: () => s.platform.notify('Trajectory', 'Notifications are working.')),
           _Row('Keep running in tray when closed', s.keepInTray ? 'On' : 'Off', onTap: () => s.setKeepInTray(!s.keepInTray)),
-        ]),
-        _Section('Calendar', [
-          _Row('iCal link', s.calendarUrl.isEmpty ? 'Not connected' : _short(s.calendarUrl),
-              onTap: () => _text(context, 'Calendar iCal link', s.calendarUrl, s.setCalendarUrl,
-                  hint: 'https://… .ics (Google: Settings → your calendar → Secret address in iCal format)',
-                  validate: (v) => v.isEmpty || RegExp(r'^(https?|webcal)://').hasMatch(v) ? null : 'Paste an http(s) or webcal link')),
-          _Row('Status', s.calendarUrl.isEmpty ? '-' : s.calendarError ?? (s.calendarSyncedAt == null ? 'Syncing…' : 'Synced ${s.calendarBlocks.length} event(s) this week'),
-              onTap: s.calendarUrl.isEmpty ? null : s.syncCalendar),
         ]),
         _Section('Accountability', [
           _Row('Partner', s.profile.partnerEmail.isEmpty ? 'None' : '${s.profile.partnerName} · ${s.profile.partnerEmail}', onTap: () => _partner(context)),
@@ -283,5 +262,92 @@ class _Row extends StatelessWidget {
   }
 }
 
-String _short(String url) => url.length <= 42 ? url : '${url.substring(0, 28)}…${url.substring(url.length - 10)}';
 
+
+/// Where the AI key lives when you skipped it during setup.
+class _AiPanel extends StatefulWidget {
+  const _AiPanel();
+  @override
+  State<_AiPanel> createState() => _AiPanelState();
+}
+
+class _AiPanelState extends State<_AiPanel> {
+  final _key = TextEditingController();
+  String? _err;
+
+  void _save() {
+    final s = context.appRead;
+    final v = _key.text.trim();
+    if (v.isNotEmpty && !looksLikeClaudeKey(v)) {
+      return setState(() => _err = v.split(RegExp(r'\s+')).length >= 6 ? 'That looks like your recovery phrase, not an API key.' : 'Anthropic API keys start with "sk-ant-".');
+    }
+    s.setApiKey(v);
+    if (v.isNotEmpty && s.profile.aiProvider != 'Claude') s.setProvider('Claude');
+    _key.clear();
+    setState(() => _err = null);
+    s.flash(v.isEmpty ? 'API key removed' : 'Key saved (encrypted). Testing it…');
+    if (v.isNotEmpty) s.testAi();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.app;
+    final t = context.t;
+    final status = switch (s.aiProvider) {
+      'Claude' => s.apiKey.isEmpty ? 'Not connected: no Claude key. The coach, day plans, reviews and project breakdowns run without AI.' : 'Claude key ••••${s.apiKey.substring(s.apiKey.length - 4)} saved.',
+      'Ollama' => 'Using Ollama on this machine (${CoachService.ollamaModel}). Nothing leaves your computer.',
+      _ => 'AI is off. Everything runs on your own data, no model.',
+    };
+    return TourTarget(
+      id: 'settings.ai',
+      child: Panel(
+        borderColor: s.aiReady ? null : t.a,
+        child: VStack(gap: 12, children: [
+          Row(children: [
+            const Expanded(child: Strong('AI connection', size: 16)),
+            Segmented(
+              size: 12.5,
+              options: const [('Claude', 'Claude'), ('Ollama', 'Ollama (local)'), ('None', 'Off')],
+              value: s.localOnly ? 'Ollama' : s.profile.aiProvider,
+              onChanged: (v) {
+                if (s.localOnly && v != 'Ollama') s.setLocalOnly(false);
+                s.setProvider(v);
+              },
+            ),
+          ]),
+          Text(status, style: t.body(size: 13, color: s.aiReady ? t.ink : t.a)),
+          if (s.profile.aiProvider == 'Claude' && !s.localOnly) ...[
+            Row(children: [
+              Expanded(
+                child: Field(
+                  controller: _key,
+                  obscure: true,
+                  mono: true,
+                  hint: s.apiKey.isEmpty ? 'Paste your key: sk-ant-…' : 'Paste a new key to replace it',
+                  onSubmitted: (_) => _save(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Btn('Save key', kind: BtnKind.primary, size: 13, onTap: _save),
+              if (s.apiKey.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Btn('Remove', kind: BtnKind.text, size: 12.5, onTap: () {
+                  s.setApiKey('');
+                  s.flash('API key removed');
+                }),
+              ],
+            ]),
+            if (_err != null) Text(_err!, style: t.mono(size: 12, color: t.a)),
+            Muted('Get a key at console.anthropic.com → API keys. It\'s stored inside your encrypted vault and only sent to api.anthropic.com. Model: ${CoachService.claudeModel}.', size: 12),
+          ],
+          Row(children: [
+            Btn(s.testingAi ? 'Testing…' : 'Test connection', size: 13, pad: const EdgeInsets.symmetric(horizontal: 14, vertical: 7), enabled: !s.testingAi && s.aiProvider != 'None', onTap: s.testAi),
+            const SizedBox(width: 12),
+            if (s.aiTestResult != null)
+              Expanded(child: Text(s.aiTestResult!, style: t.body(size: 12.5, color: s.aiTestResult!.startsWith('Connected') ? t.b : t.a))),
+          ]),
+        ]),
+      ),
+    );
+  }
+}

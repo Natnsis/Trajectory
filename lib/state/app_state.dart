@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../services/capture_parser.dart';
-import '../services/calendar.dart';
 import '../services/coach.dart';
 import '../services/platform.dart';
 import '../services/security.dart';
@@ -24,15 +23,13 @@ const plannerStartHour = 7;
 const plannerHours = 15;
 
 class AppState extends ChangeNotifier {
-  AppState(this._storage, {CoachService? coach, PlatformServices? platform, CalendarService? calendar})
+  AppState(this._storage, {CoachService? coach, PlatformServices? platform})
       : _coach = coach ?? CoachService(),
-        platform = platform ?? const PlatformServices(),
-        _calendar = calendar ?? CalendarService();
+        platform = platform ?? const PlatformServices();
 
   final Storage _storage;
   final CoachService _coach;
   final PlatformServices platform;
-  final CalendarService _calendar;
 
   /// Set by the desktop shell; quits the app (tray-aware).
   Future<void> Function()? onQuit;
@@ -69,8 +66,6 @@ class AppState extends ChangeNotifier {
   bool notificationsOn = true;
   bool keepInTray = true;
 
-  /// iCal (.ics) subscription URL, e.g. Google Calendar's secret address.
-  String calendarUrl = '';
   bool energy = true;
   bool aiPlanPending = true;
   bool recoveryAdded = false;
@@ -97,10 +92,8 @@ class AppState extends ChangeNotifier {
   bool newProjOpen = false;
   String habitTab = 'build';
   String horizon = '1y';
-  String letter = 'A';
   int review = 0;
   String stake = 'Charity';
-  bool badDay = false;
   bool thinking = false;
   String? coachError;
 
@@ -117,6 +110,9 @@ class AppState extends ChangeNotifier {
 
   int focusLen = 1500, focusSec = 1500;
   bool focusRun = false, focusEnd = false;
+
+  /// What the current focus session is for. Picked before the clock starts.
+  FocusTarget? focusTarget;
   int gateT = 10;
   String gateSite = 'x.com';
   DateTime _lastActivity = DateTime.now();
@@ -240,7 +236,7 @@ class AppState extends ChangeNotifier {
     }
     if (focusRun && focusSec <= 0) {
       focusRun = false;
-      if (screen == Screen.focus) focusEnd = true;
+      focusEnd = true;
       dirty = true;
       _notify('Focus session done', 'Nice. Log what you finished.');
     }
@@ -273,7 +269,6 @@ class AppState extends ChangeNotifier {
   List<(DateTime, String, String)> _reminders = [];
   final Set<String> _fired = {};
   String _remindersDay = '';
-  DateTime _lastCalendarSync = DateTime.fromMillisecondsSinceEpoch(0);
 
   void _notify(String title, String body) {
     if (notificationsOn) platform.notify(title, body);
@@ -288,9 +283,16 @@ class AppState extends ChangeNotifier {
       final p = t.time.split(':');
       r.add((day.add(Duration(hours: int.parse(p[0]), minutes: int.parse(p[1]))), 'Now: ${t.title}', t.goal == 'Inbox' ? 'From your task list' : 'Serves ${t.goal}'));
     }
-    for (final b in [...weekBlocks, ...calendarBlocks].where((b) => b.day == todayIndex && (b.kind == 'plan' || b.kind == 'new' || b.kind == 'cal'))) {
-      // Five minutes' warning before planner and calendar blocks.
+    for (final b in weekBlocks.where((b) => b.day == todayIndex && (b.kind == 'plan' || b.kind == 'new'))) {
+      // Five minutes' warning before planner blocks, and a check after they start.
       r.add((day.add(Duration(hours: b.start)).subtract(const Duration(minutes: 5)), 'In 5 minutes: ${b.title}', '${b.len}h block'));
+      r.add((day.add(Duration(hours: b.start, minutes: nudgeGraceMinutes)), 'You planned: ${b.title}', 'It started $nudgeGraceMinutes min ago. Start it now, or be honest and mark it missed.'));
+    }
+    for (final h in build.where((h) => h.hasPlan && h.startMinute != null && h.scheduledOn(now))) {
+      final at = day.add(Duration(minutes: h.startMinute!));
+      r.add((at, 'Time for ${h.name}', '${h.sessionMinutes} min, as planned.${h.benefit.isEmpty ? '' : ' ${h.benefit}'}'));
+      // Fires only if nothing's been logged by then (checked when it fires).
+      r.add((at.add(const Duration(minutes: nudgeGraceMinutes)), 'habit:${h.id}', ''));
     }
     for (final c in contracts.where((c) => c.status != 'OVERDUE' && DateTime(c.dueDate.year, c.dueDate.month, c.dueDate.day).difference(day).inDays == 1)) {
       r.add((day.add(const Duration(hours: 9)), 'Due tomorrow: ${c.title}', 'Stake: ${c.stake}'));
@@ -303,17 +305,19 @@ class AppState extends ChangeNotifier {
     final now = DateTime.now();
     if (_dek != null) {
       if (_remindersDay != dayKey(now) || now.second == 0) _rebuildReminders();
-      if (calendarUrl.isNotEmpty && now.difference(_lastCalendarSync).inMinutes >= 30) {
-        _lastCalendarSync = now;
-        syncCalendar();
-      }
     }
     for (final (at, title, body) in _reminders) {
       final key = '${at.toIso8601String()}|$title';
       // Fire within a minute of the due time, once.
       if (!_fired.contains(key) && !now.isBefore(at) && now.difference(at).inSeconds < 60) {
         _fired.add(key);
-        _notify(title, body);
+        if (title.startsWith('habit:')) {
+          final h = build.where((x) => 'habit:${x.id}' == title).firstOrNull;
+          final n = h == null ? null : _habitNudge(h, now);
+          if (n != null) _notify(n.title, n.body);
+        } else {
+          _notify(title, body);
+        }
       }
     }
   }
@@ -341,10 +345,11 @@ class AppState extends ChangeNotifier {
   }
 
   int get doneTasks => todayTasks.where((t) => t.done).length;
-  int get habitCount => build.length + reduce.length;
+  int get habitCount => habitsDueToday.length + reduce.length;
+  List<BuildHabit> get habitsDueToday => build.where((h) => h.scheduledOn(DateTime.now())).toList();
   int get doneHabits {
     final now = DateTime.now();
-    return build.where((h) => h.doneOn(now)).length + reduce.where((h) => h.heldOn(now)).length;
+    return habitsDueToday.where((h) => h.progressOn(now) >= 1).length + reduce.where((h) => h.heldOn(now)).length;
   }
 
   int votesOn(String k) =>
@@ -355,15 +360,24 @@ class AppState extends ChangeNotifier {
 
   int get votes => votesOn(todayKey);
 
+  /// A rough patch: momentum under 40, or yesterday under a third done.
+  bool get roughPatch => (hasMomentum && momentum < 40) || missedStreak >= 1;
+
   void _vote() => extraVotes[todayKey] = (extraVotes[todayKey] ?? 0) + 1;
 
   /// Share of a day's planned tasks and habits that got done. Null for days
   /// before you had anything planned.
+  ///
+  /// A habit with a time plan counts by how much of the planned session you
+  /// actually put in (20 of 30 minutes = 0.67), and only on its scheduled days.
   double? dayScore(DateTime d) {
     final k = dayKey(d);
+    final day = dateOnly(d);
     final planned = tasks.where((t) => t.date == k).toList();
-    final habitsDone = build.where((h) => h.days.contains(k)).length + reduce.where((h) => h.heldDays.contains(k)).length;
-    final denom = planned.length + habitCount;
+    final due = build.where((h) => h.scheduledOn(d) && !h.created.isAfter(day)).toList();
+    final reduceDue = reduce.length;
+    final habitsDone = due.fold<double>(0, (a, h) => a + h.progressOn(d)) + reduce.where((h) => h.heldDays.contains(k)).length;
+    final denom = planned.length + due.length + reduceDue;
     if (denom == 0 || (planned.isEmpty && habitsDone == 0 && k != todayKey)) return null;
     final done = planned.where((t) => t.done).length + habitsDone;
     return (done / denom).clamp(0, 1).toDouble();
@@ -391,7 +405,9 @@ class AppState extends ChangeNotifier {
   int get pathPct {
     final total = todayTasks.length + habitCount;
     if (total == 0) return 0;
-    return ((doneTasks + doneHabits) / total * 100).round();
+    final now = DateTime.now();
+    final habits = habitsDueToday.fold<double>(0, (a, h) => a + h.progressOn(now)) + reduce.where((h) => h.heldOn(now)).length;
+    return ((doneTasks + habits) / total * 100).round();
   }
 
   /// Completion rate of a habit over the last [window] days, 0-100.
@@ -407,6 +423,39 @@ class AppState extends ChangeNotifier {
   String get currentWeek => weekKey(DateTime.now());
   bool get planLocked => lockedWeeks.contains(currentWeek);
   List<Block> get weekBlocks => blocks.where((b) => b.week == currentWeek).toList();
+
+  /// Planner shows this week plus [plannerOffset] weeks (0 = this week).
+  int plannerOffset = 0;
+  DateTime get plannerMonday => weekStart.add(Duration(days: 7 * plannerOffset));
+  String get plannerWeek => weekKey(plannerMonday);
+  bool get plannerLocked => lockedWeeks.contains(plannerWeek);
+  List<Block> get plannerBlocks => blocks.where((b) => b.week == plannerWeek).toList();
+
+  /// Days in the viewed week that are already over (nothing new goes there).
+  bool plannerDayPast(int day) => plannerOffset < 0 || (plannerOffset == 0 && day < todayIndex);
+
+  void shiftPlannerWeek(int delta) {
+    plannerOffset = (plannerOffset + delta).clamp(-8, 8);
+    selectedUnscheduled = null;
+    notifyListeners();
+  }
+
+  /// Habit sessions laid onto the viewed week, from each habit's plan.
+  /// Derived, not stored: edit the habit to move them.
+  List<Block> get plannerHabitBlocks => [
+        for (final h in build.where((h) => h.hasPlan && h.startMinute != null))
+          for (var d = 0; d < 7; d++)
+            if (h.scheduledOn(plannerMonday.add(Duration(days: d))) && h.startMinute! ~/ 60 >= plannerStartHour && h.startMinute! ~/ 60 < plannerStartHour + plannerHours)
+              Block(
+                id: 'habit:${h.id}:$d',
+                day: d,
+                start: h.startMinute! ~/ 60,
+                len: (h.sessionMinutes / 60).ceil().clamp(1, 4),
+                title: '${h.name} · ${h.sessionMinutes}m',
+                kind: h.progressOn(plannerMonday.add(Duration(days: d))) >= 1 ? 'habitDone' : 'habit',
+                week: plannerWeek,
+              ),
+      ];
 
   DateTime get weekStart {
     final n = DateTime.now();
@@ -592,8 +641,6 @@ class AppState extends ChangeNotifier {
     }
     if (ok) {
       _rebuildReminders();
-      _lastCalendarSync = DateTime.now();
-      syncCalendar();
       fails = 0;
       lockoutLen = 30;
       pinErr = '';
@@ -697,6 +744,8 @@ class AppState extends ChangeNotifier {
     gateLog = [];
     extraVotes = {};
     adjustments = {};
+    weekRules = {};
+    reviewNote = '';
     planDraft = null;
     reviewDraft = null;
   }
@@ -735,7 +784,7 @@ class AppState extends ChangeNotifier {
       final existing = {for (final g in goals) g.name: g};
       goals = [
         for (final (n, t) in cleanGoals)
-          existing[n.trim()] ?? Goal(name: n.trim(), target: t.trim(), lastTouched: DateTime.now())
+          existing[n.trim()] ?? Goal(name: n.trim(), due: parseLooseDate(t), lastTouched: DateTime.now())
       ];
     }
     final cleanReduce = reduceDrafts.where((r) => r.$1.trim().isNotEmpty).toList();
@@ -812,10 +861,27 @@ class AppState extends ChangeNotifier {
     _changed();
   }
 
-  void updateBuildHabit(BuildHabit h, {String? name, String? target, String? stack}) {
+  void updateBuildHabit(BuildHabit h,
+      {String? name, String? target, String? stack, List<String>? steps, double? hoursPerWeek, Set<int>? weekdays, String? time, String? benefit, String? cost}) {
     if (name != null && name.trim().isNotEmpty) h.name = name.trim();
     if (target != null) h.target = target.trim();
     if (stack != null) h.stack = stack.trim();
+    if (steps != null) {
+      final old = {for (final st in h.steps) st.title: st};
+      final next = [for (final x in steps.where((x) => x.trim().isNotEmpty)) old[x.trim()] ?? HabitStep(title: x.trim())];
+      h.steps
+        ..clear()
+        ..addAll(next);
+    }
+    if (hoursPerWeek != null) h.hoursPerWeek = hoursPerWeek;
+    if (weekdays != null) {
+      h.weekdays
+        ..clear()
+        ..addAll(weekdays);
+    }
+    if (time != null) h.time = time;
+    if (benefit != null) h.benefit = benefit.trim();
+    if (cost != null) h.cost = cost.trim();
     _changed();
   }
 
@@ -848,11 +914,113 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Quick check-in from Today: logs one planned session, or undoes today's.
   void toggleHabit(BuildHabit h) {
     final k = todayKey;
-    h.days.contains(k) ? h.days.remove(k) : h.days.add(k);
+    if (h.days.contains(k)) {
+      h.days.remove(k);
+      h.logs.removeWhere((l) => l.date == k);
+    } else {
+      _logHabit(h, h.sessionMinutes);
+    }
     _changed();
   }
+
+  void _logHabit(BuildHabit h, int minutes, [DateTime? on]) {
+    final k = dayKey(on ?? DateTime.now());
+    if (minutes > 0) h.logs.add(HabitLog(k, minutes));
+    h.skipped.remove(k);
+    // Checked in once the day's planned session is covered (or any time logged without a plan).
+    if (!h.hasPlan || h.minutesOn(k) >= h.sessionMinutes) h.days.add(k);
+  }
+
+  /// Logs real minutes on a habit for [on] (today by default).
+  void logHabitMinutes(BuildHabit h, int minutes, [DateTime? on]) {
+    if (minutes <= 0) return;
+    _logHabit(h, minutes, on);
+    _changed();
+    final k = dayKey(on ?? DateTime.now());
+    flash(h.hasPlan
+        ? '${h.name}: ${h.minutesOn(k)} of ${h.sessionMinutes} min${h.minutesOn(k) >= h.sessionMinutes ? ' · on plan' : ''}'
+        : '${h.name}: $minutes min logged');
+  }
+
+  void toggleHabitStep(BuildHabit h, HabitStep st) {
+    st.done = !st.done;
+    _changed();
+    if (st.done) flash('Step done: ${st.title}');
+  }
+
+  /// "Not today", said honestly. Stops the nudge; still counts as a miss.
+  void skipHabitToday(BuildHabit h) {
+    h.skipped.add(todayKey);
+    _changed();
+    flash(h.cost.isEmpty ? 'Skipped ${h.name} today' : 'Skipped. The cost you named: ${h.cost}');
+  }
+
+  /// Planned vs. logged minutes over the last [days] days (including today).
+  (int logged, int planned) habitPlanProgress(BuildHabit h, {int days = 7}) {
+    final now = DateTime.now();
+    final from = dateOnly(now).subtract(Duration(days: days - 1));
+    return (h.minutesBetween(from, now), h.plannedBetween(from, now));
+  }
+
+  /// Minutes logged Monday to today vs. the week's plan.
+  (int logged, int planned) habitWeek(BuildHabit h) =>
+      (h.minutesBetween(weekStart, DateTime.now()), h.hasPlan ? (h.hoursPerWeek * 60).round() : 0);
+
+  // ---------------------------------------------------------------- nudges
+  static const nudgeGraceMinutes = 15;
+
+  /// "We planned this; you're doing something else." Built from your own
+  /// plan and your own words, only for things that should have started.
+  List<Nudge> get nudges {
+    final now = DateTime.now();
+    final out = <Nudge>[];
+    final nowMin = now.hour * 60 + now.minute;
+    for (final h in build) {
+      final n = _habitNudge(h, now);
+      if (n != null && h.startMinute != null && nowMin >= h.startMinute! + nudgeGraceMinutes) out.add(n);
+    }
+    if (!(focusRun)) {
+      for (final b in weekBlocks.where((b) => b.day == todayIndex && (b.kind == 'plan' || b.kind == 'new'))) {
+        if (nowMin >= b.start * 60 + nudgeGraceMinutes && nowMin < (b.end + 2) * 60) {
+          out.add(Nudge(
+            'block',
+            b.id,
+            'You planned “${b.title}” for ${_two(b.start)}:00-${_two(b.end)}:00.',
+            nowMin < b.end * 60 ? 'It\'s ${_two(now.hour)}:${_two(now.minute)} and it hasn\'t started.' : 'The slot is over and it isn\'t marked done.',
+            '',
+          ));
+        }
+      }
+    }
+    return out;
+  }
+
+  Nudge? _habitNudge(BuildHabit h, DateTime now) {
+    final k = dayKey(now);
+    if (!h.hasPlan || !h.scheduledOn(now) || h.skipped.contains(k) || h.progressOn(now) >= 1 || h.created.isAfter(dateOnly(now))) return null;
+    final logged = h.minutesOn(k);
+    final (wLogged, wPlanned) = habitWeek(h);
+    return Nudge(
+      'habit',
+      h.id,
+      'You planned ${h.sessionMinutes} min of ${h.name}${h.time.isEmpty ? ' today' : ' at ${h.time}'}.',
+      '${logged == 0 ? 'Nothing logged yet' : 'Only $logged min so far'}. This week: ${(wLogged / 60).toStringAsFixed(1)}h of ${(wPlanned / 60).toStringAsFixed(1)}h.',
+      h.cost,
+    );
+  }
+
+  /// Marks a planner block done/missed from a nudge.
+  void resolveBlockNudge(String blockId, bool done) {
+    final b = blocks.where((x) => x.id == blockId).firstOrNull;
+    if (b == null) return;
+    b.kind = done ? 'done' : 'missed';
+    _changed();
+    flash(done ? 'Marked done' : 'Marked missed. Honest beats perfect.');
+  }
+
 
   void toggleHeld(ReduceHabit h) {
     final k = todayKey;
@@ -1018,19 +1186,65 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------- focus
-  void startFocus() {
+  /// Everything a focus session can be spent on, most relevant first:
+  /// habits due today, today's open tasks, then open project tasks.
+  List<FocusTarget> get focusOptions {
+    final now = DateTime.now();
+    return [
+      for (final h in build.where((h) => h.scheduledOn(now) && h.progressOn(now) < 1))
+        FocusTarget('habit', h.id, h.name, 'Habit${h.hasPlan ? ' · ${h.minutesOn(todayKey)}/${h.sessionMinutes} min today' : ''}', 'Inbox', h.sessionMinutes),
+      for (final t in todayTasks.where((t) => !t.done)) FocusTarget('task', t.id, t.title, t.time == '-' ? 'Task' : 'Task · ${t.time}', t.goal, 0),
+      for (final p in projects.where((p) => p.status == 'Active'))
+        for (final pt in p.allTasks.where((x) => !x.done)) FocusTarget('project', '${p.id}/${pt.id}', pt.title, '${p.name} · ${pt.est}', p.goal, 0),
+      for (final h in build.where((h) => !h.scheduledOn(now))) FocusTarget('habit', h.id, h.name, 'Habit · not scheduled today', 'Inbox', h.sessionMinutes),
+    ];
+  }
+
+  /// Opens the focus screen. The clock waits until you pick what it's for
+  /// and press Start; [target] preselects (e.g. "Start focus" on a habit).
+  void startFocus([FocusTarget? target]) {
     screen = Screen.focus;
     overlay = Ov.none;
     tray = false;
+    tourScreen = null;
+    // A session in progress (or finished while you were elsewhere) resumes
+    // where it was, so its time still gets saved.
+    if (focusEnd || (focusStarted && focusTarget != null)) {
+      if (focusSec <= 0) focusEnd = true;
+      notifyListeners();
+      return;
+    }
     focusEnd = false;
-    focusRun = true;
+    focusRun = false;
+    focusTarget = target ?? (focusTarget != null && focusOptions.any((o) => o.key == focusTarget!.key) ? focusTarget : null);
+    if (focusTarget == null && nextTask.id != '_none') {
+      focusTarget = focusOptions.where((o) => o.kind == 'task' && o.ref == nextTask.id).firstOrNull;
+    }
+    if (target != null && target.kind == 'habit' && target.minutes >= 5) {
+      focusLen = target.minutes * 60;
+      focusSec = focusLen;
+    }
     if (focusSec <= 0) focusSec = focusLen;
     tourScreen = null;
     _maybeAutoTour();
     notifyListeners();
   }
 
+  void pickFocusTarget(FocusTarget t) {
+    if (focusRun) return;
+    focusTarget = t;
+    if (t.kind == 'habit' && t.minutes >= 5 && focusSec == focusLen) {
+      focusLen = t.minutes * 60;
+      focusSec = focusLen;
+    }
+    notifyListeners();
+  }
+
+  /// Started at least once this session (the clock has moved).
+  bool get focusStarted => focusSec < focusLen;
+
   void toggleTimer() {
+    if (focusTarget == null && !focusRun) return flash('Pick what this session is for first');
     if (!focusRun && focusSec <= 0) focusSec = focusLen;
     focusRun = !focusRun;
     notifyListeners();
@@ -1042,50 +1256,109 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Leaving mid-session asks to save first; leaving before starting just exits.
   void exitFocus() {
+    if (focusStarted && focusTarget != null) return endFocus();
     focusRun = false;
     go(Screen.today);
   }
 
+  void discardFocus() {
+    focusRun = false;
+    focusEnd = false;
+    focusSec = focusLen;
+    go(Screen.today);
+  }
+
   void setFocusLen(int secs) {
+    if (focusRun) return;
     focusLen = secs;
     focusSec = secs;
     notifyListeners();
   }
 
+  /// Saves the session against what it was for: minutes go to the habit's
+  /// log, the project task's time, or the task; [markDone] finishes it.
   void submitFocus(String note, bool markDone) {
-    final n = nextTask;
-    sessions.add(FocusSession(at: DateTime.now(), minutes: focusMins, goal: n.goal, task: n.id == '_none' ? '' : n.title));
-    if (markDone && n.id != '_none') {
-      n.done = true;
-      n.doneAt = DateTime.now();
-      _touchGoal(n.goal);
+    final ft = focusTarget;
+    final mins = focusMins;
+    var goal = ft?.goal ?? 'Inbox';
+    switch (ft?.kind) {
+      case 'habit':
+        final h = build.where((x) => x.id == ft!.ref).firstOrNull;
+        if (h != null) _logHabit(h, mins);
+      case 'task':
+        final t = tasks.where((x) => x.id == ft!.ref).firstOrNull;
+        if (t != null && markDone && !t.done) {
+          t.done = true;
+          t.doneAt = DateTime.now();
+        }
+        if (t != null) goal = t.goal;
+      case 'project':
+        final ids = ft!.ref.split('/');
+        final p = projects.where((x) => x.id == ids.first).firstOrNull;
+        final pt = p?.allTasks.where((x) => x.id == ids.last).firstOrNull;
+        if (p != null && pt != null) {
+          pt.loggedMin += mins;
+          if (markDone) pt.done = true;
+          p.lastActive = DateTime.now();
+          goal = p.goal;
+        }
     }
+    sessions.add(FocusSession(at: DateTime.now(), minutes: mins, goal: goal, task: ft?.title ?? '', kind: ft?.kind ?? 'free', ref: ft?.ref ?? ''));
+    _touchGoal(goal);
     _vote();
     if (note.trim().isNotEmpty) {
-      proof.insert(0, Proof(date: _shortDate(DateTime.now()), title: note.trim(), goal: n.goal));
+      proof.insert(0, Proof(date: _shortDate(DateTime.now()), title: note.trim(), goal: goal));
     }
     screen = Screen.today;
     focusEnd = false;
+    focusRun = false;
     focusSec = focusLen;
+    focusTarget = null;
     _changed();
-    flash('+1 vote for “I\'m someone who ${profile.identity}”');
+    flash('Saved $mins min${ft == null ? '' : ' on ${ft.title}'} · +1 vote');
   }
 
   // ---------------------------------------------------------------- vision / projects
-  void addGoal(String name, String why, String target) {
-    goals.add(Goal(name: name, why: why, target: target, lastTouched: DateTime.now()));
+  void addGoal(String name, String why, DateTime? due) {
+    goals.add(Goal(name: name, why: why, due: due, lastTouched: DateTime.now()));
     _changed();
     flash('Goal added');
   }
 
-  void updateGoal(Goal g, {String? name, String? why, String? target, int? pct}) {
-    if (name != null) g.name = name;
+  /// [clearDue] removes the date; a null [due] leaves it unchanged.
+  void updateGoal(Goal g, {String? name, String? why, DateTime? due, bool clearDue = false, int? pct}) {
+    if (name != null && name.trim().isNotEmpty) {
+      final old = g.name;
+      g.name = name.trim();
+      // Keep projects and tasks linked when a goal is renamed.
+      if (old != g.name) {
+        for (final p in projects.where((p) => p.goal == old)) {
+          p.goal = g.name;
+        }
+        for (final t in tasks.where((t) => t.goal == old)) {
+          t.goal = g.name;
+        }
+      }
+    }
     if (why != null) g.why = why;
-    if (target != null) g.target = target;
+    if (due != null) g.due = due;
+    if (clearDue) g.due = null;
     if (pct != null) g.pct = pct;
     _changed();
   }
+
+  /// Progress from linked projects' tasks when there are any, otherwise the
+  /// value you set by hand.
+  int goalPct(Goal g) {
+    final ps = projects.where((p) => p.goal == g.name && p.allTasks.isNotEmpty).toList();
+    if (ps.isEmpty) return g.pct;
+    final all = ps.expand((p) => p.allTasks).toList();
+    return (all.where((t) => t.done).length / all.length * 100).round();
+  }
+
+  bool goalPctFromProjects(Goal g) => projects.any((p) => p.goal == g.name && p.allTasks.isNotEmpty);
 
   void deleteGoal(Goal g) {
     goals.remove(g);
@@ -1114,6 +1387,7 @@ class AppState extends ChangeNotifier {
   }
 
   void createProject(String description, String goal, List<Milestone> ms) {
+    if (description.trim().isEmpty) return flash('Describe the project first');
     final name = description.split(RegExp(r'[—.\n]')).first.trim();
     projects.add(Project(
         name: name.length > 40 ? '${name.substring(0, 40)}…' : name,
@@ -1138,11 +1412,68 @@ class AppState extends ChangeNotifier {
     _changed();
   }
 
+  /// "Write the outline 3h" sets a 3-hour estimate; default 1h.
   void addProjTask(Project p, Milestone m, String title) {
     if (title.trim().isEmpty) return;
-    m.tasks.add(ProjTask(title: title.trim(), est: '1h', when: 'unscheduled'));
+    final (t, h) = splitHours(title);
+    m.tasks.add(ProjTask(title: t, est: '${h}h', when: 'unscheduled'));
     p.lastActive = DateTime.now();
     _changed();
+  }
+
+  void updateProjTask(Project p, ProjTask t, {String? title, int? hours}) {
+    if (title != null && title.trim().isNotEmpty) t.title = title.trim();
+    if (hours != null) t.est = '${hours.clamp(1, 200)}h';
+    p.lastActive = DateTime.now();
+    _changed();
+  }
+
+  void removeProjTask(Project p, ProjTask t) {
+    for (final m in p.milestones) {
+      m.tasks.remove(t);
+    }
+    _changed();
+  }
+
+  void addMilestone(Project p, String name, DateTime? due) {
+    if (name.trim().isEmpty) return;
+    p.milestones.add(Milestone(name: name.trim(), due: due, tasks: []));
+    p.lastActive = DateTime.now();
+    _changed();
+  }
+
+  void updateMilestone(Project p, Milestone m, {String? name, DateTime? due, bool clearDue = false}) {
+    if (name != null && name.trim().isNotEmpty) m.name = name.trim();
+    if (due != null) m.due = due;
+    if (clearDue) m.due = null;
+    _changed();
+  }
+
+  void removeMilestone(Project p, Milestone m) {
+    p.milestones.remove(m);
+    _changed();
+  }
+
+  void deleteProject(Project p) {
+    projects.remove(p);
+    selectedProjectId = null;
+    go(Screen.projects);
+    _changed();
+  }
+
+  /// Focus hours per week on [p] over the last 4 weeks.
+  double projectPace(Project p) {
+    final since = dateOnly(DateTime.now()).subtract(const Duration(days: 27));
+    final ids = {for (final t in p.allTasks) '${p.id}/${t.id}'};
+    final mins = sessions.where((x) => x.kind == 'project' && ids.contains(x.ref) && !x.at.isBefore(since)).fold<int>(0, (a, x) => a + x.minutes);
+    return mins / 60 / 4;
+  }
+
+  /// When the remaining estimate runs out at your real pace. Null without pace.
+  DateTime? projectForecast(Project p) {
+    final pace = projectPace(p);
+    if (pace <= 0 || p.remainingHours <= 0) return null;
+    return dateOnly(DateTime.now()).add(Duration(days: (p.remainingHours / pace * 7).ceil()));
   }
 
   void setReward(Project p, String reward) {
@@ -1155,20 +1486,25 @@ class AppState extends ChangeNotifier {
     _changed();
   }
 
-  /// Generates a milestone breakdown, via AI when configured, otherwise a
-  /// sensible offline template. Sets [breakdownError] when the AI call fails.
+  /// Generates a milestone breakdown with the configured AI. Returns null
+  /// (and sets [breakdownError]) when there's no AI or the call fails, so the
+  /// caller falls back to writing steps by hand. No canned templates.
   String? breakdownError;
 
-  Future<List<Milestone>> breakdown(String description) async {
+  Future<List<Milestone>?> breakdown(String description) async {
     breakdownError = null;
+    if (!aiReady) {
+      breakdownError = 'No AI connected. Add a Claude key in Settings → AI connection, or write the steps yourself.';
+      return null;
+    }
     try {
       final res = await _coach.json(
         provider: aiProvider,
         apiKey: apiKey,
         system: 'You turn a short project description into a realistic plan for one person working part-time. '
             'Return 3-5 milestones in order. Each milestone gets 1-4 concrete first tasks with honest hour estimates '
-            '(integers). Milestone names are 1-3 words. Dates like "Oct 20" relative to today (${shortDate(DateTime.now())}), '
-            'or "TBD" if unclear. Never use em-dashes.',
+            '(integers). Milestone names are 1-3 words. Each milestone gets a realistic due date as YYYY-MM-DD, counting '
+            'from today (${dayKey(DateTime.now())}), or an empty string if unclear. Never use em-dashes.',
         prompt: description,
         schema: const {
           'type': 'object',
@@ -1206,8 +1542,8 @@ class AppState extends ChangeNotifier {
         final ms = <Milestone>[];
         for (final m in (res['milestones'] as List).cast<Map<String, dynamic>>()) {
           ms.add(Milestone(
-            name: 'M${ms.length + 1} · ${m['name']}',
-            date: (m['date'] as String?)?.trim().isEmpty ?? true ? 'TBD' : m['date'] as String,
+            name: m['name'] as String,
+            due: parseLooseDate(m['date'] as String?),
             tasks: [
               for (final t in (m['tasks'] as List).cast<Map<String, dynamic>>())
                 ProjTask(title: t['title'] as String, est: '${((t['hours'] as num?) ?? 1).toInt().clamp(1, 40)}h', when: 'unscheduled'),
@@ -1215,17 +1551,14 @@ class AppState extends ChangeNotifier {
           ));
         }
         if (ms.isNotEmpty) return ms;
+        breakdownError = 'The AI returned no milestones. Try a more specific description.';
       }
     } on CoachException catch (e) {
       breakdownError = e.message;
     } catch (e) {
       breakdownError = 'Breakdown failed: $e';
     }
-    return [
-      Milestone(name: 'M1 · Setup', date: 'TBD', tasks: [ProjTask(title: 'Pick tools, name, template', est: '3h', when: 'unscheduled')]),
-      Milestone(name: 'M2 · First half', date: 'TBD', tasks: [ProjTask(title: 'Outline, draft, ship part one', est: '6h', when: 'unscheduled')]),
-      Milestone(name: 'M3 · Second half', date: 'TBD', tasks: [ProjTask(title: 'Finish, ship, review numbers', est: '6h', when: 'unscheduled')]),
-    ];
+    return null;
   }
 
   // ---------------------------------------------------------------- habits
@@ -1240,10 +1573,24 @@ class AppState extends ChangeNotifier {
     flash('Logged. Swap: ${h.swap}');
   }
 
-  void addBuildHabit(String name, String target, String stack) {
-    build.add(BuildHabit(name: name, target: target, stack: stack));
+  void addBuildHabit(String name, String target, String stack,
+      {List<String> steps = const [], double hoursPerWeek = 0, Set<int>? weekdays, String time = '', String benefit = '', String cost = ''}) {
+    build.add(BuildHabit(
+      name: name,
+      target: target,
+      stack: stack,
+      steps: [for (final x in steps.where((x) => x.trim().isNotEmpty)) HabitStep(title: x.trim())],
+      hoursPerWeek: hoursPerWeek,
+      weekdays: weekdays,
+      time: time,
+      benefit: benefit.trim(),
+      cost: cost.trim(),
+    ));
     _changed();
+    flash(hoursPerWeek > 0 ? 'Habit planned · ${_fmtH(hoursPerWeek)}/week' : 'Habit added');
   }
+
+  String _fmtH(double h) => '${h == h.roundToDouble() ? h.round() : h.toStringAsFixed(1)}h';
 
   void addReduceHabit(String name, String swap) {
     reduce.add(ReduceHabit(name: name, swap: swap));
@@ -1267,13 +1614,55 @@ class AppState extends ChangeNotifier {
     _changed();
   }
 
+  /// Locks the viewed week: blocks can't be created, moved or removed, only
+  /// marked done or missed.
   void toggleLock() {
-    planLocked ? lockedWeeks.remove(currentWeek) : lockedWeeks.add(currentWeek);
+    plannerLocked ? lockedWeeks.remove(plannerWeek) : lockedWeeks.add(plannerWeek);
     _changed();
-    flash(planLocked ? 'Week locked. Past days can\'t be changed until you unlock.' : 'Week unlocked');
+    flash(plannerLocked ? 'Week locked in. Blocks stay where they are; mark them done or missed.' : 'Week unlocked');
+  }
+
+  bool _lockedGuard() {
+    if (!plannerLocked) return false;
+    flash('This week is locked. Unlock it to change the plan.');
+    return true;
+  }
+
+  /// Creates a block directly on the grid.
+  void createBlock(int day, int hour, String title, int len) {
+    if (title.trim().isEmpty || _lockedGuard()) return;
+    if (plannerDayPast(day)) return flash('That day is over. Plan forward.');
+    final l = len.clamp(1, plannerHours);
+    final start = hour.clamp(plannerStartHour, plannerStartHour + plannerHours - l);
+    blocks.add(Block(day: day, start: start, len: l, title: title.trim(), kind: 'plan', week: plannerWeek));
+    _changed();
+    flash('Planned ${title.trim()} · ${dayNames[day]} ${_two(start)}:00');
+  }
+
+  /// Drag-and-drop move to another day/hour.
+  void moveBlock(Block b, int day, int hour) {
+    if (_lockedGuard()) return;
+    if (plannerDayPast(day)) return flash('That day is over. Plan forward.');
+    b
+      ..day = day
+      ..start = hour.clamp(plannerStartHour, plannerStartHour + plannerHours - b.len)
+      ..week = plannerWeek;
+    if (b.kind == 'missed') b.kind = 'plan';
+    _changed();
+  }
+
+  void updateBlock(Block b, {String? title, int? len}) {
+    if (_lockedGuard()) return;
+    if (title != null && title.trim().isNotEmpty) b.title = title.trim();
+    if (len != null) {
+      b.len = len.clamp(1, plannerHours);
+      b.start = b.start.clamp(plannerStartHour, plannerStartHour + plannerHours - b.len);
+    }
+    _changed();
   }
 
   void reschedule() {
+    if (_lockedGuard()) return;
     final missed = weekBlocks.where((b) => b.kind == 'missed').toList();
     if (missed.isEmpty) return flash('Nothing missed');
     // Next day (from tomorrow, wrapping to Sunday) with a free peak slot.
@@ -1295,21 +1684,22 @@ class AppState extends ChangeNotifier {
 
   int get todayIndex => DateTime.now().weekday - 1;
 
-  void placeBlock(int day, int hour) {
-    final id = selectedUnscheduled;
-    if (id == null) return;
-    if (planLocked && day < todayIndex) return flash('Week is locked. Unlock to edit.');
-    final u = unscheduled.firstWhere((x) => x.id == id);
+  void placeBlock(int day, int hour, [String? id]) {
+    id ??= selectedUnscheduled;
+    if (id == null || _lockedGuard()) return;
+    if (plannerDayPast(day)) return flash('That day is over. Plan forward.');
+    final u = unscheduled.where((x) => x.id == id).firstOrNull;
+    if (u == null) return;
     final start = hour.clamp(plannerStartHour, plannerStartHour + plannerHours - u.len);
-    blocks.add(Block(day: day, start: start, len: u.len, title: u.title, kind: 'new'));
+    blocks.add(Block(day: day, start: start, len: u.len, title: u.title, kind: 'new', week: plannerWeek));
     unscheduled.remove(u);
     selectedUnscheduled = null;
     _changed();
-    flash('Scheduled ${u.title} · ${dayNames[day]} $start:00');
+    flash('Scheduled ${u.title} · ${dayNames[day]} ${_two(start)}:00');
   }
 
   void removeBlock(Block b) {
-    if (planLocked && b.day < todayIndex) return flash('Week is locked. Unlock to edit.');
+    if (_lockedGuard()) return;
     blocks.remove(b);
     if (b.kind == 'new' || b.kind == 'plan') unscheduled.add(Unscheduled(title: b.title, len: b.len));
     _changed();
@@ -1324,40 +1714,6 @@ class AppState extends ChangeNotifier {
     if (title.trim().isEmpty) return;
     unscheduled.add(Unscheduled(title: title.trim(), len: len));
     _changed();
-  }
-
-  // ---------------------------------------------------------------- calendar
-  /// Read-only events for the current week from the iCal subscription.
-  List<Block> calendarBlocks = [];
-  String? calendarError;
-  DateTime? calendarSyncedAt;
-
-  Future<void> syncCalendar() async {
-    if (calendarUrl.isEmpty) {
-      calendarBlocks = [];
-      calendarError = null;
-      notifyListeners();
-      return;
-    }
-    try {
-      final events = await _calendar.fetchWeek(calendarUrl, weekStart);
-      calendarBlocks = [
-        for (final e in events)
-          if (e.start.hour >= plannerStartHour && e.start.hour < plannerStartHour + plannerHours)
-            Block(day: e.start.weekday - 1, start: e.start.hour, len: e.hours.clamp(1, plannerHours), title: e.title, kind: 'cal'),
-      ];
-      calendarError = null;
-      calendarSyncedAt = DateTime.now();
-    } catch (e) {
-      calendarError = 'Calendar sync failed: $e';
-    }
-    notifyListeners();
-  }
-
-  void setCalendarUrl(String url) {
-    calendarUrl = url.trim().replaceFirst(RegExp(r'^webcal://'), 'https://');
-    _changed();
-    syncCalendar();
   }
 
   void setNotifications(bool v) {
@@ -1376,9 +1732,20 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setLetter(String l) {
-    letter = l;
-    notifyListeners();
+  /// One row per planned habit for the Mirror: hours/week you actually put
+  /// in over the last 4 weeks vs. what you planned.
+  List<(BuildHabit, double actualPerWeek, double plannedPerWeek)> get habitPace {
+    final now = DateTime.now();
+    final from = dateOnly(now).subtract(const Duration(days: 27));
+    return [
+      for (final h in build.where((h) => h.hasPlan))
+        () {
+          // Weeks the habit has existed in the window (at least one).
+          final start = h.created.isAfter(from) ? h.created : from;
+          final weeks = (dateOnly(now).difference(start).inDays + 1) / 7;
+          return (h, h.minutesBetween(from, now) / 60 / weeks.clamp(1, 4), h.hoursPerWeek);
+        }(),
+    ];
   }
 
   /// Three small, concrete steps built from your own data.
@@ -1429,8 +1796,25 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setAdjustment(String id, String v) {
+  void setAdjustment(String id, String v, [String text = '']) {
     adjustments[id] = v;
+    final next = weekKey(DateTime.now().add(const Duration(days: 7)));
+    final rules = weekRules.putIfAbsent(next, () => []);
+    rules.remove(text);
+    if (v == 'yes' && text.isNotEmpty) rules.add(text);
+    _changed();
+  }
+
+  /// Adjustments you accepted in a review, keyed by the week they apply to.
+  /// Shown on Today and the Planner that week, and given to the coach.
+  Map<String, List<String>> weekRules = {};
+  List<String> get rulesThisWeek => weekRules[currentWeek] ?? const [];
+  List<String> get rulesNextWeek => weekRules[weekKey(DateTime.now().add(const Duration(days: 7)))] ?? const [];
+
+  /// What got in the way, in your words (Weekly Review, Slips step).
+  String reviewNote = '';
+  void setReviewNote(String v) {
+    reviewNote = v;
     _changed();
   }
 
@@ -1451,11 +1835,16 @@ class AppState extends ChangeNotifier {
       ..writeln('Tasks still open: ${weekTasks.where((t) => !t.done).map((t) => '${t.title} (${t.goal})').join('; ').ifEmpty('none')}')
       ..writeln('Focus minutes this week: ${sessionsSince(ws).fold<int>(0, (a, x) => a + x.minutes)}')
       ..writeln('Goals: ${goals.map((g) => '${g.name} ${g.pct}% (untouched ${g.days}d)').join('; ').ifEmpty('none')}')
-      ..writeln('Habits (done in last 7 days): ${build.map((h) => '${h.name} ${habitRate(h.days, window: 7)}%').join(', ').ifEmpty('none')}')
+      ..writeln('Habits (last 7 days, logged vs planned minutes): ${build.map((h) {
+          final (l, p) = habitPlanProgress(h);
+          return h.hasPlan ? '${h.name} $l/$p min' : '${h.name} ${habitRate(h.days, window: 7)}% of days';
+        }).join(', ').ifEmpty('none')}')
       ..writeln('Urges logged this week: ${reduce.map((h) => '${h.name} ${h.urgesThisWeek}').join(', ').ifEmpty('none')}')
       ..writeln('Friction gate this week: opened anyway ${gateLog.where((g) => g.opened && !g.at.isBefore(ws)).length}, walked away ${gateLog.where((g) => !g.opened && !g.at.isBefore(ws)).length}')
       ..writeln('Contracts: ${contracts.map((c) => '${c.title}, ${c.status}').join('; ').ifEmpty('none')}')
-      ..writeln('Peak energy window: ${_two(profile.peakStart)}-${_two(profile.peakEnd)}');
+      ..writeln('Peak energy window: ${_two(profile.peakStart)}-${_two(profile.peakEnd)}')
+      ..writeln('What they say got in the way: ${reviewNote.trim().ifEmpty('nothing written')}')
+      ..writeln('Rules they set for this week: ${rulesThisWeek.join('; ').ifEmpty('none')}');
     try {
       final res = await _coach.json(
         provider: aiProvider,
@@ -1523,6 +1912,7 @@ class AppState extends ChangeNotifier {
 
   void signContract(String text, DateTime due) {
     if (text.trim().isEmpty) return flash('Write what you will do first');
+    if (stake == 'Partner' && profile.partnerEmail.isEmpty) return flash('Add an accountability partner in Settings first');
     contracts.insert(
         0,
         Contract(
@@ -1539,7 +1929,15 @@ class AppState extends ChangeNotifier {
     _changed();
     if (kept) _vote();
     flash(kept ? 'Kept · +1 vote' : 'Broken · logged honestly');
-    if (!kept && profile.notifyBroken && profile.partnerEmail.isNotEmpty) {
+    // The stake you picked is what happens now. You still press the final button.
+    if (!kept && c.stake == 'Public post') {
+      final text = 'I committed to "${c.title}" by ${shortDate(c.dueDate)} and didn\'t do it. Saying it publicly so next time I do.';
+      platform.openSite('https://x.com/intent/post?text=${Uri.encodeComponent(text)}');
+    }
+    if (!kept && c.stake.startsWith(r'$100')) {
+      platform.openSite('https://www.givewell.org/top-charities-fund');
+    }
+    if (!kept && (c.stake.endsWith('is told') || profile.notifyBroken) && profile.partnerEmail.isNotEmpty) {
       platform.draftEmail(
         to: profile.partnerEmail,
         subject: 'I broke a commitment',
@@ -1613,11 +2011,6 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------- proof
-  void toggleBadDay() {
-    badDay = !badDay;
-    notifyListeners();
-  }
-
   void addProof(String title, String goal) {
     proof.insert(0, Proof(date: _shortDate(DateTime.now()), title: title, goal: goal));
     _changed();
@@ -1642,18 +2035,29 @@ class AppState extends ChangeNotifier {
   String _coachContextText() {
     final parts = <String>[];
     if (coachContext['goals'] == true) {
-      parts.add('Goals: ${goals.map((g) => '${g.name} (${g.pct}%, target ${g.target}, last touched ${g.days}d ago)').join('; ')}.');
+      parts.add('Goals: ${goals.map((g) => '${g.name} (${goalPct(g)}%${g.due == null ? '' : ', due ${dayKey(g.due!)}'}, last touched ${g.days}d ago)').join('; ')}.');
     }
     if (coachContext['tasks'] == true) {
       parts.add('Today\'s tasks: ${todayTasks.map((t) => '${t.time} ${t.title}${t.done ? ' [done]' : ''}').join('; ')}.');
     }
     if (coachContext['habits'] == true) {
-      parts.add('Habits done in the last 14 days: ${build.map((h) => '${h.name} ${habitRate(h.days)}%').join(', ')}.${hasMomentum ? ' Overall momentum $momentum.' : ''}');
+      parts.add('Habits: ${build.map((h) {
+            final (l, p) = habitPlanProgress(h);
+            return h.hasPlan
+                ? '${h.name} (plan ${_fmtH(h.hoursPerWeek)}/week${h.time.isEmpty ? '' : ' at ${h.time}'}; last 7 days $l of $p min; '
+                    'benefit if kept: "${h.benefit}"; cost if skipped: "${h.cost}"; steps: ${h.steps.map((x) => '${x.title}${x.done ? ' [done]' : ''}').join(' > ')})'
+                : '${h.name} ${habitRate(h.days)}% of the last 14 days';
+          }).join('; ')}.${hasMomentum ? ' Overall momentum $momentum.' : ''}');
+      final nd = nudges;
+      if (nd.isNotEmpty) parts.add('Right now they are behind on: ${nd.map((n) => n.what).join(' ')}');
     }
+    if (rulesThisWeek.isNotEmpty) parts.add('Rules they accepted for this week: ${rulesThisWeek.join('; ')}.');
+    parts.add('Planner this week: ${weekBlocks.map((b) => '${b.title} ${dayNames[b.day]} ${_two(b.start)}:00 ${b.kind}').join('; ').ifEmpty('nothing planned')}.');
+    parts.add('Active projects: ${projects.where((p) => p.status == 'Active').map((p) => '${p.name} ${p.computedPct}% (${p.remainingHours.round()}h left${p.due == null ? '' : ', due ${dayKey(p.due!)}'})').join('; ').ifEmpty('none')}.');
     if (coachContext['urges'] == true) {
       parts.add('Habits being reduced: ${reduce.map((h) => '${h.name} (${h.urgesThisWeek} urges this week)').join(', ')}.');
     }
-    parts.add('Peak energy ${profile.peakStart}:00-${profile.peakEnd}:00. Identity: "I am someone who ${profile.identity}".');
+    parts.add('Today is ${longDate(DateTime.now())}, ${_two(DateTime.now().hour)}:${_two(DateTime.now().minute)}. Peak energy ${profile.peakStart}:00-${profile.peakEnd}:00. Identity: "I am someone who ${profile.identity}".');
     return parts.join(' ');
   }
 
@@ -1680,22 +2084,81 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       coachError = e.toString();
     }
-    reply ??= _offlineReply();
+    reply ??= offlineReply(q);
     msgs.add(ChatMsg(false, reply));
     thinking = false;
     _changed();
   }
 
-  /// Offline coach: no AI, so it only says things your data supports.
-  String _offlineReply() {
-    final n = nextTask;
-    final peak = '${_two(profile.peakStart)}:00';
-    final task = n.id == '_none' ? 'the one thing you\'ve been avoiding' : '"${n.title}"';
-    return switch (tone) {
-      'Gentle' => 'Let\'s keep it small. Give $task ten minutes tomorrow at $peak, in your peak window. That\'s all for now. (Offline coach: add an AI key in Settings for real answers.)',
-      'Drill' => '$task. $peak tomorrow. Phone in another room. Go put it on the planner. (Offline coach: add an AI key in Settings for real answers.)',
-      _ => 'Next action: put $task at $peak tomorrow, your peak window, and protect it. (Offline coach: add an AI key in Settings for real answers.)',
-    };
+  /// Offline coach: no AI, so it answers from your data, by what you asked.
+  /// It says plainly that it's not a model.
+  String offlineReply(String q) {
+    final lq = q.toLowerCase();
+    final now = DateTime.now();
+    final lines = <String>[];
+    final open = todayTasks.where((t) => !t.done).toList();
+    final due = habitsDueToday.where((h) => h.progressOn(now) < 1).toList();
+    if (lq.contains('week')) {
+      final wb = weekBlocks;
+      final planned = wb.fold<int>(0, (a, b) => a + b.len), done = wb.where((b) => b.kind == 'done').fold<int>(0, (a, b) => a + b.len);
+      lines.add(wb.isEmpty ? 'Nothing is on this week\'s planner yet.' : 'This week: ${done}h done of ${planned}h planned, ${wb.where((b) => b.kind == 'missed').length} block(s) missed.');
+      for (final h in build.where((h) => h.hasPlan)) {
+        final (l, p) = habitWeek(h);
+        lines.add('${h.name}: ${(l / 60).toStringAsFixed(1)}h of ${(p / 60).toStringAsFixed(1)}h.');
+      }
+      if (unscheduled.isNotEmpty) lines.add('${unscheduled.length} item(s) still unscheduled: ${unscheduled.take(3).map((u) => u.title).join(', ')}.');
+      lines.add('Next action: open the Planner, put each unscheduled item in a peak slot (${_two(profile.peakStart)}-${_two(profile.peakEnd)}), then lock the week.');
+    } else if (lq.contains('slip') || lq.contains('why') || lq.contains('fail') || lq.contains('skip')) {
+      final missed = weekBlocks.where((b) => b.kind == 'missed').toList();
+      final late = missed.where((b) => b.start >= 14).length;
+      if (missed.isNotEmpty) lines.add('${missed.length} planned block(s) missed this week${late > 0 ? ', $late of them after 14:00' : ''}.');
+      for (final h in build.where((h) => h.hasPlan)) {
+        final (l, p) = habitPlanProgress(h);
+        if (p > 0 && l < p) lines.add('${h.name}: $l of $p planned minutes in the last 7 days${h.cost.isEmpty ? '' : '. You said skipping it costs you: ${h.cost}'}.');
+      }
+      if (missedStreak > 0) lines.add('$missedStreak day(s) in a row under a third of the plan.');
+      if (lines.isEmpty) lines.add('Your data doesn\'t show a slip pattern yet. Log habits and mark planner blocks done or missed for a few days.');
+      lines.add('Next action: shrink the first thing you missed to 10 minutes and put it in tomorrow\'s peak window.');
+    } else if (lq.contains('goal') || lq.contains('break')) {
+      final g = goals.isEmpty ? null : (goals.toList()..sort((a, b) => goalPct(a).compareTo(goalPct(b)))).first;
+      if (g == null) {
+        lines.add('You have no goals yet. Add one on the Vision page.');
+      } else {
+        final ps = projects.where((p) => p.goal == g.name).toList();
+        lines.add('Least progress: ${g.name}, ${goalPct(g)}%${g.due == null ? '' : ', due ${shortDay(g.due!)} (${daysUntil(g.due!)} days)'}${g.expectedPct == null ? '' : ', should be ~${g.expectedPct}% by now'}.');
+        lines.add(ps.isEmpty ? 'No project serves it yet.' : 'Projects: ${ps.map((p) => '${p.name} ${p.computedPct}%').join(', ')}.');
+        lines.add('Next action: ${ps.isEmpty ? 'create a project for it on the Projects page and write its first three steps.' : 'start a focus session on the next open task in ${ps.first.name}.'}');
+      }
+    } else {
+      if (due.isNotEmpty) lines.add('Habits still due today: ${due.map((h) => '${h.name}${h.time.isEmpty ? '' : ' at ${h.time}'} (${h.minutesOn(todayKey)}/${h.sessionMinutes} min)').join(', ')}.');
+      lines.add(open.isEmpty ? 'No open tasks today.' : 'Open tasks: ${open.take(5).map((t) => '${t.time == '-' ? '' : '${t.time} '}${t.title}').join('; ')}.');
+      final first = due.isNotEmpty ? due.first.name : open.isNotEmpty ? open.first.title : null;
+      lines.add(first == null ? 'Next action: capture one thing that moves a goal forward.' : 'Next action: start a focus session on "$first" now.');
+    }
+    return '${lines.join(' ')}\n\n(Offline coach: this is computed from your data, not an AI. Connect Claude in Settings → AI connection for real conversation.)';
+  }
+
+  /// Sends a one-line request to check the AI connection. Returns a status line.
+  bool testingAi = false;
+  String? aiTestResult;
+
+  Future<void> testAi() async {
+    if (testingAi) return;
+    testingAi = true;
+    aiTestResult = null;
+    notifyListeners();
+    try {
+      final r = await _coach.complete(provider: aiProvider, apiKey: apiKey, system: 'Reply with exactly: ok', prompt: 'ping', maxTokens: 64);
+      aiTestResult = r == null
+          ? (aiProvider == 'Claude' ? 'No API key set.' : 'No AI provider selected.')
+          : 'Connected to ${aiProvider == 'Claude' ? CoachService.claudeModel : CoachService.ollamaModel}. Coach, plans, reviews and breakdowns now use it.';
+    } on CoachException catch (e) {
+      aiTestResult = e.message;
+    } catch (e) {
+      aiTestResult = 'Failed: $e';
+    }
+    testingAi = false;
+    notifyListeners();
   }
 
   // ---------------------------------------------------------------- gate
@@ -1789,13 +2252,13 @@ class AppState extends ChangeNotifier {
     b.writeln('_I am someone who ${profile.identity}._\n');
     b.writeln('## Vision goals');
     for (final g in goals) {
-      b.writeln('- **${g.name}**, ${g.pct}% · target ${g.target}${g.why.isEmpty ? '' : ', “${g.why}”'}');
+      b.writeln('- **${g.name}**, ${goalPct(g)}%${g.due == null ? '' : ' · due ${shortDay(g.due!)}'}${g.why.isEmpty ? '' : ', “${g.why}”'}');
     }
     b.writeln('\n## Projects');
     for (final p in projects) {
       b.writeln('- ${p.name} (${p.status}, ${p.computedPct}%)');
       for (final m in p.milestones) {
-        b.writeln('  - ${m.name} · ${m.date}');
+        b.writeln('  - ${m.name} · ${m.dateLabel}');
         for (final t in m.tasks) {
           b.writeln('    - [${t.done ? 'x' : ' '}] ${t.title} (${t.est})');
         }
@@ -1843,12 +2306,13 @@ class AppState extends ChangeNotifier {
         'lockedWeeks': lockedWeeks.toList(),
         'notificationsOn': notificationsOn,
         'keepInTray': keepInTray,
-        'calendarUrl': calendarUrl,
         'energy': energy,
         'aiPlanPending': aiPlanPending,
         'planAcceptedDay': planAcceptedDay,
         'recoveryAdded': recoveryAdded,
         'adjustments': adjustments,
+        'weekRules': weekRules,
+        'reviewNote': reviewNote,
         'tone': tone,
         'coachContext': coachContext,
         'toursSeen': toursSeen.toList(),
@@ -1886,12 +2350,13 @@ class AppState extends ChangeNotifier {
     if (j['planLocked'] == true) lockedWeeks.add(currentWeek);
     notificationsOn = j['notificationsOn'] ?? true;
     keepInTray = j['keepInTray'] ?? true;
-    calendarUrl = j['calendarUrl'] ?? '';
     energy = j['energy'] ?? true;
     aiPlanPending = j['aiPlanPending'] ?? true;
     planAcceptedDay = j['planAcceptedDay'] ?? '';
     recoveryAdded = j['recoveryAdded'] ?? false;
     adjustments = Map<String, String>.from(j['adjustments'] ?? {});
+    weekRules = {for (final e in (j['weekRules'] as Map? ?? {}).entries) e.key as String: List<String>.from(e.value as List)};
+    reviewNote = j['reviewNote'] ?? '';
     tone = j['tone'] ?? 'Direct';
     coachContext = Map<String, bool>.from(j['coachContext'] ?? coachContext);
     toursSeen = {...(j['toursSeen'] as List? ?? []).cast<String>()};
@@ -1968,6 +2433,32 @@ List<String> weekLabels([DateTime? now]) {
     final d = monday.add(Duration(days: i));
     return '${dayNames[i]} ${d.day}';
   });
+}
+
+/// Something a focus session is for. [ref] is the task/habit id, or
+/// "projectId/taskId" for project tasks.
+class FocusTarget {
+  const FocusTarget(this.kind, this.ref, this.title, this.meta, this.goal, this.minutes);
+  final String kind, ref, title, meta, goal;
+
+  /// Planned minutes (habits), 0 otherwise.
+  final int minutes;
+  String get key => '$kind:$ref';
+}
+
+/// A "you planned this" reality check. [cost] is the user's own words.
+class Nudge {
+  const Nudge(this.kind, this.ref, this.what, this.status, this.cost);
+  final String kind, ref, what, status, cost;
+  String get title => what;
+  String get body => '$status${cost.isEmpty ? '' : ' If you skip: $cost'}';
+}
+
+/// "Write outline 3h" -> ("Write outline", 3). Defaults to 1 hour.
+(String, int) splitHours(String v) {
+  final m = RegExp(r'\s+(\d+)\s*h(?:ours?)?\s*$', caseSensitive: false).firstMatch(v.trim());
+  if (m == null) return (v.trim(), 1);
+  return (v.trim().substring(0, m.start).trim(), int.parse(m.group(1)!).clamp(1, 200));
 }
 
 class PlanItem {

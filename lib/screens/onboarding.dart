@@ -5,6 +5,8 @@ import '../services/coach.dart';
 import '../services/security.dart';
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
+import '../state/models.dart';
+import '../widgets/date_picker.dart';
 import '../theme/icons.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -53,7 +55,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       for (final g in s.goals)
         (
           TextEditingController(text: g.name),
-          TextEditingController(text: g.target),
+          TextEditingController(text: g.due == null ? g.target : dayKey(g.due!)),
         ),
       if (s.goals.length < 5)
         (TextEditingController(), TextEditingController()),
@@ -449,11 +451,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Field(
-                    controller: g.$2,
-                    hint: 'Jun 2027',
-                    mono: true,
-                    width: 140,
+                  SizedBox(
+                    width: 200,
+                    child: DateField(
+                      value: parseLooseDate(g.$2.text),
+                      hint: 'By when?',
+                      first: DateTime.now(),
+                      onChanged: (v) => setState(() => g.$2.text = v == null ? '' : dayKey(v)),
+                    ),
                   ),
                 ],
               ),
