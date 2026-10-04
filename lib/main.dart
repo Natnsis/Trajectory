@@ -160,17 +160,6 @@ class _RootViewState extends State<RootView> {
       }
       return false;
     }
-    if (_s.screen == Screen.lock && ModalRoute.of(context)?.isCurrent == true) {
-      final ch = e.character;
-      if (ch != null && RegExp(r'^[0-9]$').hasMatch(ch)) {
-        _s.press(ch);
-        return true;
-      }
-      if (e.logicalKey == LogicalKeyboardKey.backspace) {
-        _s.press('⌫');
-        return true;
-      }
-    }
     return false;
   }
 

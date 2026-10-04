@@ -720,6 +720,49 @@ void main() {
       await finish(tester, s);
     });
 
+    testWidgets('Lock screen: type the PIN into an input; wrong PIN clears, right one unlocks', (tester) async {
+      tester.view.physicalSize = const Size(1440, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final dir = Directory.systemTemp.createTempSync('traj_lock');
+      late AppState s;
+      await tester.runAsync(() async {
+        s = AppState(Storage.at(dir), coach: offline());
+        await s.load();
+        await s.completeOnboarding(
+            pinValue: '2468', phrase: Security.newPhrase(), name: 'N', identity: 'x', goalDrafts: const [], reduceDrafts: const [],
+            wake: '06:45', peakStart: 8, peakEnd: 11, workStart: 9, workEnd: 17, provider: 'None', key: '', partnerEmail: '');
+      });
+      s.autoTours = false;
+      s.lockNow();
+      await tester.pumpWidget(TrajectoryApp(state: s));
+      await tester.runAsync(() => GoogleFonts.pendingFonts());
+      await settle(tester);
+      expect(find.text('Enter your PIN'), findsOneWidget);
+      expect(find.text('7'), findsNothing, reason: 'no on-screen keypad');
+      final input = find.byKey(const ValueKey('pin-input'));
+      expect(tester.widget<TextField>(input).obscureText, isTrue);
+
+      await tester.enterText(input, '12ab');
+      expect(tester.widget<TextField>(input).controller!.text, '12', reason: 'digits only');
+      await tester.runAsync(() async {
+        await tester.enterText(input, '1111'); // completes the 4-digit PIN: submits
+        await Future<void>.delayed(const Duration(seconds: 2));
+      });
+      await settle(tester);
+      expect(s.screen, Screen.lock);
+      expect(find.textContaining('Wrong PIN'), findsOneWidget);
+      expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+
+      await tester.runAsync(() async {
+        await tester.enterText(input, '2468');
+        await Future<void>.delayed(const Duration(seconds: 2));
+      });
+      await settle(tester);
+      expect(s.screen, Screen.today);
+      await finish(tester, s);
+    });
+
     testWidgets('Coach without a key says so and links to Settings', (tester) async {
       final s = await boot(tester);
       s.go(Screen.coach);

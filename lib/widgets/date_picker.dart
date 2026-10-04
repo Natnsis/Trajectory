@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../state/models.dart';
@@ -176,28 +178,35 @@ class DateField extends StatelessWidget {
 }
 
 /// Mini time picker: hour grid plus quarter-hour minutes. Returns "HH:MM",
-/// "" when cleared, null when dismissed.
-Future<String?> pickTime(BuildContext context, {String initial = '', String title = 'Pick a time', bool allowClear = true}) {
-  return showTDialog<String>(context, title: title, width: 380, body: (ctx) => _TimeGrid(initial: initial, allowClear: allowClear));
+/// "" when cleared, null when dismissed. [hourOnly] hides minutes (returns
+/// "HH:00"); only hours in [minHour]..[maxHour] can be picked.
+Future<String?> pickTime(BuildContext context,
+    {String initial = '', String title = 'Pick a time', bool allowClear = true, bool hourOnly = false, int minHour = 5, int maxHour = 23}) {
+  return showTDialog<String>(context,
+      title: title, width: 380, body: (ctx) => _TimeGrid(initial: initial, allowClear: allowClear, hourOnly: hourOnly, minHour: minHour, maxHour: maxHour));
 }
 
 class _TimeGrid extends StatefulWidget {
-  const _TimeGrid({required this.initial, required this.allowClear});
+  const _TimeGrid({required this.initial, required this.allowClear, required this.hourOnly, required this.minHour, required this.maxHour});
   final String initial;
-  final bool allowClear;
+  final bool allowClear, hourOnly;
+  final int minHour, maxHour;
   @override
   State<_TimeGrid> createState() => _TimeGridState();
 }
 
 class _TimeGridState extends State<_TimeGrid> {
-  late int? _h = int.tryParse(widget.initial.split(':').first);
+  late int? _h = () {
+    final h = int.tryParse(widget.initial.split(':').first);
+    return h == null || h < widget.minHour || h > widget.maxHour ? null : h;
+  }();
   late int _m = (int.tryParse(widget.initial.split(':').last) ?? 0) ~/ 15 * 15;
 
   @override
   Widget build(BuildContext context) {
     final t = context.t;
     String two(int n) => n.toString().padLeft(2, '0');
-    Widget cell(String l, bool sel, VoidCallback onTap, {Key? key}) => Tap(
+    Widget cell(String l, bool sel, VoidCallback? onTap, {Key? key}) => Tap(
           key: key,
           onTap: onTap,
           builder: (_, hover, child) => Container(
@@ -210,7 +219,7 @@ class _TimeGridState extends State<_TimeGrid> {
             ),
             child: child,
           ),
-          child: Text(l, style: t.mono(size: 12.5, color: sel ? t.bInk : t.ink)),
+          child: Text(l, style: t.mono(size: 12.5, color: sel ? t.bInk : onTap == null ? t.line : t.ink)),
         );
     return VStack(gap: 12, children: [
       Text('Hour', style: t.body(size: 12, color: t.mute)),
@@ -221,21 +230,27 @@ class _TimeGridState extends State<_TimeGrid> {
         crossAxisSpacing: 5,
         childAspectRatio: 1.7,
         physics: const NeverScrollableScrollPhysics(),
-        children: [for (var h = 5; h <= 23; h++) cell(two(h), _h == h, () => setState(() => _h = h), key: ValueKey('hour-$h'))],
-      ),
-      Text('Minute', style: t.body(size: 12, color: t.mute)),
-      Row(children: [
-        for (final m in const [0, 15, 30, 45]) ...[
-          if (m > 0) const SizedBox(width: 6),
-          Expanded(child: cell(':${two(m)}', _m == m, () => setState(() => _m = m), key: ValueKey('min-$m'))),
+        children: [
+          for (var h = math.min(5, widget.minHour); h <= 23; h++)
+            cell(two(h), _h == h, h < widget.minHour || h > widget.maxHour ? null : () => setState(() => _h = h), key: ValueKey('hour-$h')),
         ],
-      ]),
+      ),
+      if (!widget.hourOnly) ...[
+        Text('Minute', style: t.body(size: 12, color: t.mute)),
+        Row(children: [
+          for (final m in const [0, 15, 30, 45]) ...[
+            if (m > 0) const SizedBox(width: 6),
+            Expanded(child: cell(':${two(m)}', _m == m, () => setState(() => _m = m), key: ValueKey('min-$m'))),
+          ],
+        ]),
+      ],
       Row(children: [
         if (widget.allowClear) Btn('No time', kind: BtnKind.text, size: 12.5, onTap: () => Navigator.pop(context, '')),
         const Spacer(),
         Btn('Cancel', size: 13, onTap: () => Navigator.pop(context)),
         const SizedBox(width: 8),
-        Btn(_h == null ? 'Set time' : 'Set ${two(_h!)}:${two(_m)}', kind: BtnKind.primary, size: 13, onTap: _h == null ? null : () => Navigator.pop(context, '${two(_h!)}:${two(_m)}')),
+        Btn(_h == null ? 'Set time' : 'Set ${two(_h!)}:${two(widget.hourOnly ? 0 : _m)}', kind: BtnKind.primary, size: 13,
+            onTap: _h == null ? null : () => Navigator.pop(context, '${two(_h!)}:${two(widget.hourOnly ? 0 : _m)}')),
       ]),
     ]);
   }
@@ -265,6 +280,26 @@ class TimeField extends StatelessWidget {
         const SizedBox(width: 8),
         Text(value.isEmpty ? hint : value, style: t.mono(size: 13, color: value.isEmpty ? t.mute : t.ink)),
       ]),
+    );
+  }
+}
+
+/// Big tappable time readout (onboarding, settings) that opens [pickTime].
+class ClockButton extends StatelessWidget {
+  const ClockButton({super.key, required this.label, required this.onTap});
+  final String label;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Tap(
+      onTap: onTap,
+      builder: (_, hover, child) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(color: hover ? insetFill(context) : Colors.transparent, border: Border.all(color: hover ? t.mute : t.line), borderRadius: BorderRadius.circular(t.rs)),
+        child: child,
+      ),
+      child: Text(label, style: t.mono(size: 20, weight: FontWeight.w600)),
     );
   }
 }

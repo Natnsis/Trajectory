@@ -546,53 +546,23 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               gap: 10,
               children: [
                 _rhythm(t, 'Wake', [
-                  _drop(
-                    t,
-                    wakeMin,
-                    [for (var m = 4 * 60; m <= 12 * 60; m += 15) m],
-                    _clock,
-                    (v) => setState(() => wakeMin = v),
-                  ),
+                  _clockPick('Wake time', wakeMin, _clock(wakeMin), (v) => setState(() => wakeMin = v), hours: false, minH: 4, maxH: 12),
                 ]),
                 _rhythm(t, 'Peak energy', [
-                  _drop(
-                    t,
-                    peakStart,
-                    [for (var h = 5; h <= 22; h++) h],
-                    _two,
-                    (v) => setState(() {
-                      peakStart = v;
-                      if (peakEnd <= v) peakEnd = v + 1;
-                    }),
-                  ),
+                  _clockPick('Peak starts', peakStart, _two(peakStart), (v) => setState(() {
+                        peakStart = v;
+                        if (peakEnd <= v) peakEnd = v + 1;
+                      }), maxH: 22),
                   _dash(t),
-                  _drop(
-                    t,
-                    peakEnd,
-                    [for (var h = peakStart + 1; h <= 23; h++) h],
-                    _two,
-                    (v) => setState(() => peakEnd = v),
-                  ),
+                  _clockPick('Peak ends', peakEnd, _two(peakEnd), (v) => setState(() => peakEnd = v), minH: peakStart + 1),
                 ]),
                 _rhythm(t, 'Work hours', [
-                  _drop(
-                    t,
-                    workStart,
-                    [for (var h = 5; h <= 20; h++) h],
-                    _two,
-                    (v) => setState(() {
-                      workStart = v;
-                      if (workEnd <= v) workEnd = v + 1;
-                    }),
-                  ),
+                  _clockPick('Work starts', workStart, _two(workStart), (v) => setState(() {
+                        workStart = v;
+                        if (workEnd <= v) workEnd = v + 1;
+                      }), maxH: 20),
                   _dash(t),
-                  _drop(
-                    t,
-                    workEnd,
-                    [for (var h = workStart + 1; h <= 23; h++) h],
-                    _two,
-                    (v) => setState(() => workEnd = v),
-                  ),
+                  _clockPick('Work ends', workEnd, _two(workEnd), (v) => setState(() => workEnd = v), minH: workStart + 1),
                 ]),
               ],
             ),
@@ -690,28 +660,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     child: Text('-', style: t.mono(size: 20, color: t.mute)),
   );
 
-  Widget _drop(
-    Tokens t,
-    int value,
-    List<int> options,
-    String Function(int) label,
-    ValueChanged<int> onChanged,
-  ) => DropdownButtonHideUnderline(
-    child: DropdownButton<int>(
-      value: value,
-      isDense: true,
-      dropdownColor: t.panel2,
-      borderRadius: BorderRadius.circular(t.rs),
-      menuMaxHeight: 320,
-      icon: Icon(Ph.caretUpDown, size: 16, color: t.mute),
-      style: t.mono(size: 20, weight: FontWeight.w600),
-      items: [
-        for (final o in options)
-          DropdownMenuItem(value: o, child: Text(label(o))),
-      ],
-      onChanged: (v) => onChanged(v!),
-    ),
-  );
+  /// Opens the time grid. [hours] picks whole hours in [minH]..[maxH];
+  /// otherwise [value] is minutes since midnight, picked to the quarter hour.
+  Widget _clockPick(String title, int value, String label, ValueChanged<int> onChanged, {bool hours = true, int minH = 5, int maxH = 23}) => ClockButton(
+        key: ValueKey('rhythm-$title'),
+        label: label,
+        onTap: () async {
+          final r = await pickTime(context,
+              title: title, allowClear: false, hourOnly: hours, minHour: minH, maxHour: maxH, initial: hours ? '${_two(value)}:00' : _clock(value));
+          if (r == null || r.isEmpty) return;
+          final p = r.split(':').map(int.parse).toList();
+          onChanged(hours ? p[0] : p[0] * 60 + p[1]);
+        },
+      );
 
   Widget _provider(Tokens t, String name, String sub) {
     final on = provider == name;

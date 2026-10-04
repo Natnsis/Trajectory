@@ -83,7 +83,6 @@ class AppState extends ChangeNotifier {
   Screen screen = Screen.lock;
   Ov overlay = Ov.none;
   bool tray = false;
-  String pin = '';
   String pinErr = '';
   int fails = 0, lockT = 0, lockoutLen = 30;
   String toast = '';
@@ -579,31 +578,12 @@ class AppState extends ChangeNotifier {
     }
     tourScreen = null;
     screen = Screen.lock;
-    pin = '';
     overlay = Ov.none;
     tray = false;
     notifyListeners();
   }
 
   // ---------------------------------------------------------------- security
-  void press(String d) {
-    if (lockT > 0 || unlocking) return;
-    if (d == '⌫') {
-      if (pin.isNotEmpty) pin = pin.substring(0, pin.length - 1);
-      notifyListeners();
-      return;
-    }
-    pin += d;
-    if (pin.length < _pinLen) {
-      pinErr = '';
-      notifyListeners();
-      return;
-    }
-    final attempt = pin;
-    pin = '';
-    unlock(attempt);
-  }
-
   /// Tries a PIN: unwraps the data key and decrypts the vault. Upgrades an
   /// old plaintext save to encryption on the first successful unlock.
   Future<bool> unlock(String attempt) async {
@@ -2233,6 +2213,19 @@ class AppState extends ChangeNotifier {
     profile
       ..partnerName = name.trim()
       ..partnerEmail = email.trim();
+    _changed();
+  }
+
+  /// Wake time and the peak/work windows. End hours are kept after starts.
+  void setRhythm({String? wake, int? peakStart, int? peakEnd, int? workStart, int? workEnd}) {
+    final p = profile;
+    if (wake != null) p.wake = wake;
+    if (peakStart != null) p.peakStart = peakStart.clamp(0, 22);
+    if (peakEnd != null) p.peakEnd = peakEnd.clamp(1, 23);
+    if (p.peakEnd <= p.peakStart) p.peakEnd = p.peakStart + 1;
+    if (workStart != null) p.workStart = workStart.clamp(0, 22);
+    if (workEnd != null) p.workEnd = workEnd.clamp(1, 23);
+    if (p.workEnd <= p.workStart) p.workEnd = p.workStart + 1;
     _changed();
   }
 

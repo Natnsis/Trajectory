@@ -7,6 +7,7 @@ import '../state/app_state.dart';
 import '../theme/tokens.dart';
 import '../shell/tour.dart';
 import '../widgets/common.dart';
+import '../widgets/date_picker.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -22,6 +23,21 @@ class SettingsScreen extends StatelessWidget {
         _Section('Profile', [
           _Row('Name', s.profile.name, onTap: () => _text(context, 'Name', s.profile.name, (v) => s.setProfile(name: v))),
           _Row('Identity', 'I am someone who ${s.profile.identity}', onTap: () => _text(context, 'I am someone who…', s.profile.identity, (v) => s.setProfile(identity: v))),
+        ]),
+        _Section('Daily rhythm', [
+          _Row('Wake', s.profile.wake, onTap: () => _time(context, 'Wake time', s.profile.wake, (v) => s.setRhythm(wake: v), minH: 4, maxH: 12, hourOnly: false)),
+          _Row('Peak energy', '${_two(s.profile.peakStart)}:00 - ${_two(s.profile.peakEnd)}:00', onTap: () async {
+            await _time(context, 'Peak starts', '${_two(s.profile.peakStart)}:00', (v) => s.setRhythm(peakStart: int.parse(v.split(':').first)), maxH: 22);
+            if (context.mounted) {
+              await _time(context, 'Peak ends', '${_two(s.profile.peakEnd)}:00', (v) => s.setRhythm(peakEnd: int.parse(v.split(':').first)), minH: s.profile.peakStart + 1);
+            }
+          }),
+          _Row('Work hours', '${_two(s.profile.workStart)}:00 - ${_two(s.profile.workEnd)}:00', onTap: () async {
+            await _time(context, 'Work starts', '${_two(s.profile.workStart)}:00', (v) => s.setRhythm(workStart: int.parse(v.split(':').first)), maxH: 20);
+            if (context.mounted) {
+              await _time(context, 'Work ends', '${_two(s.profile.workEnd)}:00', (v) => s.setRhythm(workEnd: int.parse(v.split(':').first)), minH: s.profile.workStart + 1);
+            }
+          }),
         ]),
         _Section('Security', [
           _Row('PIN', 'Change…', onTap: () => _changePin(context)),
@@ -86,6 +102,11 @@ class SettingsScreen extends StatelessWidget {
         ]),
       ]);
     }));
+  }
+
+  Future<void> _time(BuildContext context, String title, String initial, ValueChanged<String> onPick, {int minH = 5, int maxH = 23, bool hourOnly = true}) async {
+    final r = await pickTime(context, title: title, initial: initial, allowClear: false, hourOnly: hourOnly, minHour: minH, maxHour: maxH);
+    if (r != null && r.isNotEmpty) onPick(r);
   }
 
   Future<void> _pick(BuildContext context, String title, List<String> options, ValueChanged<String> onPick) {
@@ -351,3 +372,5 @@ class _AiPanelState extends State<_AiPanel> {
     );
   }
 }
+
+String _two(int n) => n.toString().padLeft(2, '0');

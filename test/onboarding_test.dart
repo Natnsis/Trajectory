@@ -68,7 +68,7 @@ void main() {
     }
   }
 
-  testWidgets('daily rhythm is picked from dropdowns and saved', (
+  testWidgets('daily rhythm is picked from the time picker and saved', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1360, 860);
@@ -105,19 +105,30 @@ void main() {
       findsNothing,
       reason: 'rhythm has no free-text inputs',
     );
-    final drops = find.byType(DropdownButton<int>);
-    expect(drops, findsNWidgets(5)); // wake, peak from/to, work from/to
-    Future<void> pick(int index, int value) async {
-      final d = tester.widget<DropdownButton<int>>(drops.at(index));
-      expect(d.items!.map((i) => i.value), contains(value));
-      d.onChanged!(value);
-      await tester.pump();
+    expect(find.byType(DropdownButton<int>), findsNothing, reason: 'times come from the time picker');
+    Future<void> pick(String which, List<String> keys, String button) async {
+      await tester.tap(find.byKey(ValueKey('rhythm-$which')));
+      await tester.pump(const Duration(milliseconds: 300));
+      for (final k in keys) {
+        await tester.tap(find.byKey(ValueKey(k)));
+        await tester.pump();
+      }
+      await tester.tap(find.text(button));
+      await tester.pump(const Duration(milliseconds: 300));
     }
 
     // Peak start 08 -> 11; end (11) must bump past it automatically.
-    await pick(1, 11);
-    expect(tester.widget<DropdownButton<int>>(drops.at(2)).value, 12);
-    await pick(0, 7 * 60 + 30); // wake 07:30
+    await pick('Peak starts', ['hour-11'], 'Set 11:00');
+    expect(find.text('12'), findsOneWidget);
+    // Peak can't end before it starts: earlier hours are disabled.
+    await tester.tap(find.byKey(const ValueKey('rhythm-Peak ends')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byKey(const ValueKey('hour-9')));
+    await tester.pump();
+    expect(find.text('Set 12:00'), findsOneWidget, reason: 'tapping 09 did nothing');
+    await tester.tap(find.text('Cancel'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await pick('Wake time', ['hour-7', 'min-30'], 'Set 07:30');
 
     for (var i = 0; i < 2; i++) {
       await next();
